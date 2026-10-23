@@ -51,6 +51,28 @@ int gfx_size;           //00149740
 int BldTextures;        //00149744
 int NoOfTextures;       //00149748
 
+//added by ROLLER: file each texture bank was last loaded from, used to name HD texture dumps
+static char s_szTextureBankSource[32][ROLLER_MAX_PATH];
+
+//-------------------------------------------------------------------------------------------------
+
+void SetTextureBankSource(int iTexIdx, const char *szFile)
+{
+  if (iTexIdx < 0 || iTexIdx >= 32)
+    return;
+  strncpy(s_szTextureBankSource[iTexIdx], szFile ? szFile : "", ROLLER_MAX_PATH - 1);
+  s_szTextureBankSource[iTexIdx][ROLLER_MAX_PATH - 1] = '\0';
+}
+
+//-------------------------------------------------------------------------------------------------
+
+const char *GetTextureBankSource(int iTexIdx)
+{
+  if (iTexIdx < 0 || iTexIdx >= 32)
+    return "";
+  return s_szTextureBankSource[iTexIdx];
+}
+
 //-------------------------------------------------------------------------------------------------
 //000280E0
 void compout(uint8 *pScrBuf, int iX0, int iY0, int iX1, int iY1, uint8 byColor)
@@ -416,6 +438,7 @@ void LoadGenericCarTexturesFromFile(const char *szTextureFile)
     return;
   }
   close(iFileHandle);
+  SetTextureBankSource(18, szTextureFile);
 
   // Get compressed file size and calculate number of texture blocks
   iFileLength = getcompactedfilelength(szTextureFile);
@@ -546,6 +569,7 @@ void LoadCarTexture(int iCartexIdx, uint8 byTexSlotIdx)
     return;
   }
   close(iFileHandle);
+  SetTextureBankSource(iTexSlotIdx, szTexFile);
 
   // Get file size
   iCompressedFileLength = getcompactedfilelength(szTexFile);
@@ -729,6 +753,7 @@ void LoadBldTextures()
     return;
   }
   close(iFileHandle);
+  SetTextureBankSource(17, bldtex_file);
 
   // Get compressed file size and calculate number of tex blocks
   iCompressedFileLength = getcompactedfilelength(bldtex_file);
@@ -814,6 +839,7 @@ void LoadTextures()
     return;
   }
   close(iFileHandle);
+  SetTextureBankSource(0, texture_file);
 
   // Get compressed file size and calculate number of texture blocks
   iCompressedFileLength = getcompactedfilelength(texture_file);

@@ -51,6 +51,7 @@ extern int   g_iSurfaceLogId;    /* -2=disabled(empty), -1=all, >=0=specific sur
 extern bool  g_bRenderStatsLog;  /* enable periodic drawcmd/vertex-count SDL_Log (not saved to INI) */
 extern bool  g_bPickTextures;    /* debug: enable right-click surface pick (see "Pick Textures" checkbox) */
 extern bool  g_bPickTexturesPNG; /* debug: also save the picked tile/pair atlas region as a PNG next to the exe (see "Pick Textures as PNG" checkbox) */
+extern bool  g_bDumpTexturesPNG; /* debug: save every tile of every loaded texture bank as a PNG to ../hd_textures_dump (see "Dump Textures as PNG" checkbox, not saved to INI) */
 extern bool  g_bRenderNative;    /* widens the GPU's 3D camera to the real window's native aspect ratio (no bars), independent of the CINEMA cheat -- selected via the "(native)" Render Scale options rather than a separate checkbox (see debug_overlay.c) */
 extern bool  g_pendingClickQuery; /* right-click surface pick: set by event loop, cleared after render */
 extern float g_clickQueryNX;     /* normalised [0,1] click X within game viewport */

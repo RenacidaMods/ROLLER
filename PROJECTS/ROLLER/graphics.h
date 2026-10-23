@@ -31,6 +31,10 @@ void LoadGenericCarTextures();
  * before entering the legacy loader. The game wrapper above keeps using the
  * original gencartex_name global. */
 void LoadGenericCarTexturesFromFile(const char *szTextureFile);
+/* Added by ROLLER: the file each texture bank (tex_idx 0..31) was last loaded
+ * from, or "" if unknown. Used to name HD texture dumps. */
+void SetTextureBankSource(int iTexIdx, const char *szFile);
+const char *GetTextureBankSource(int iTexIdx);
 void LoadCarTexture(int iCartexIdx, uint8 byTexSlotIdx);
 void LoadBldTextures();
 void LoadTextures();

@@ -12,7 +12,8 @@
 #include "game_particle_shaders.h" /* particle vertex/pixel */
 #include "3d.h"                   /* wide_on */
 #include "roller.h"               /* ROLLERTryAcquireGPUSwapchainTexture */
-#include "png_writer.h"           /* RollerWriteRgbaPng -- "Pick Textures as PNG" debug export */
+#include "png_writer.h"           /* RollerWriteRgbaPng -- "Pick Textures as PNG" / "Dump Textures as PNG" debug exports */
+#include "graphics.h"             /* GetTextureBankSource -- names "Dump Textures as PNG" folders */
 #include <SDL3/SDL.h>
 #include <stdlib.h>
 #include <string.h>
@@ -124,11 +125,18 @@ typedef struct {
     uint8          *atlasRgbaCopy;
     int             atlasWidth;
     int             atlasHeight;
+    /* Folder name for "Dump Textures as PNG": the bank's source file at load
+     * time, lower case, no directory or extension (e.g. "texture1"), or
+     * "bankNN" when the source is unknown. */
+    char            dumpName[64];
 } SceneGPUTextureSlot;
 
-/* Forward declaration: defined further down (near scene_render_gpu_quad_world_legacy),
- * used by scene_render_gpu_end_frame's "Pick Textures as PNG" export. */
+/* Forward declarations: defined further down (near scene_render_gpu_quad_world_legacy),
+ * used by scene_render_gpu_end_frame's "Pick Textures as PNG" export and by
+ * scene_render_gpu_load_texture's "Dump Textures as PNG" export. */
 static void save_picked_texture_png(const SceneGPUTextureSlot *slot, int surfIdx, bool isPair);
+static void set_texture_dump_name(SceneGPUTextureSlot *slot, int tex_idx);
+static void dump_texture_slot_pngs(const SceneGPUTextureSlot *slot);
 
 /* --------------------------------------------------------------------------
  * Deferred draw commands
@@ -3690,6 +3698,18 @@ static bool scene_render_gpu_end_frame_internal(SceneRendererGPU *r,
 
 bool scene_render_gpu_end_frame(SceneRendererGPU *r)
 {
+    /* "Dump Textures as PNG": ticking the checkbox dumps every bank already
+     * loaded; banks loaded while it stays ticked are dumped by
+     * scene_render_gpu_load_texture. */
+    static bool s_bDumpWasOn = false;
+    if (r && g_bDumpTexturesPNG && !s_bDumpWasOn) {
+        for (int i = 1; i < SCENE_GPU_MAX_TEXTURE_SLOTS; i++) {
+            if (r->texSlots[i].in_use)
+                dump_texture_slot_pngs(&r->texSlots[i]);
+        }
+    }
+    s_bDumpWasOn = g_bDumpTexturesPNG;
+
     return scene_render_gpu_end_frame_internal(r, NULL, 0, 0, 0, 0);
 }
 
@@ -4263,6 +4283,7 @@ SceneTextureHandle scene_render_gpu_load_texture(SceneRendererGPU *r,
     s->atlasRgbaCopy = atlasRgba;
     s->atlasWidth    = width;
     s->atlasHeight   = height;
+    set_texture_dump_name(s, tex_idx);
 
     /* One command buffer for all tile + pair uploads for this slot.
      * Transfer buffers are collected and released after the single submit. */
@@ -4472,6 +4493,9 @@ SceneTextureHandle scene_render_gpu_load_texture(SceneRendererGPU *r,
 
     if (tex_idx >= 0 && tex_idx < 32)
         r->texIdxToHandle[tex_idx] = (SceneTextureHandle)slotIdx;
+
+    if (g_bDumpTexturesPNG)
+        dump_texture_slot_pngs(s);
 
     return (SceneTextureHandle)slotIdx;
 }
@@ -5415,6 +5439,77 @@ static void save_picked_texture_png(const SceneGPUTextureSlot *slot, int surfIdx
         SDL_Log("PICK-PNG: FAILED to write %s (rc=%d)", path, rc);
 
     free(buf);
+}
+
+/* --------------------------------------------------------------------------
+ * "Dump Textures as PNG" debug export
+ *
+ * Writes every tile of a loaded bank as its own RGBA PNG to
+ * ../hd_textures_dump/<bank source file>/<tile>.png -- relative to FATDATA
+ * (the game's working directory), i.e. next to the FATDATA folder, the same
+ * way replays go to ../REPLAYS. Palette index 0 stays alpha 0. These are the
+ * source images for building HD replacement textures, so they're keyed by
+ * source file + tile number: tex_idx alone isn't unique, since banks 0 and
+ * 17 are reloaded with a different file on every track (see issue #241).
+ * Only 64x64 banks are dumped; 32x32 banks (low-memory gfx_size mode) are
+ * skipped so they can't overwrite the full-size dumps.
+ * -------------------------------------------------------------------------- */
+static void set_texture_dump_name(SceneGPUTextureSlot *slot, int tex_idx)
+{
+    const char *src = GetTextureBankSource(tex_idx);
+    const char *base = src;
+    for (const char *p = src; *p; p++)
+        if (*p == '/' || *p == '\\') base = p + 1;
+
+    size_t n = 0;
+    for (; base[n] && base[n] != '.' && n < sizeof(slot->dumpName) - 1; n++)
+        slot->dumpName[n] = (char)SDL_tolower((unsigned char)base[n]);
+    slot->dumpName[n] = '\0';
+
+    if (n == 0)
+        SDL_snprintf(slot->dumpName, sizeof(slot->dumpName), "bank%02d", tex_idx);
+}
+
+static void dump_texture_slot_pngs(const SceneGPUTextureSlot *slot)
+{
+    if (!slot || !slot->atlasRgbaCopy) return;
+    if (slot->tileSize != 64) {
+        SDL_Log("TEX-DUMP: skipped %s (%dx%d tiles, only 64x64 banks are dumped)",
+                slot->dumpName, slot->tileSize, slot->tileSize);
+        return;
+    }
+
+    char dir[512];
+    SDL_CreateDirectory("../hd_textures_dump");
+    SDL_snprintf(dir, sizeof(dir), "../hd_textures_dump/%s", slot->dumpName);
+    if (!SDL_CreateDirectory(dir)) {
+        SDL_Log("TEX-DUMP: FAILED to create %s: %s", dir, SDL_GetError());
+        return;
+    }
+
+    int tileSize = slot->tileSize;
+    uint8 *buf = malloc((size_t)tileSize * tileSize * 4);
+    if (!buf) return;
+
+    int written = 0;
+    for (int t = 0; t < slot->numTiles; t++) {
+        int col = t % slot->tilesPerRow;
+        int row = t / slot->tilesPerRow;
+        for (int y = 0; y < tileSize; y++) {
+            size_t srcOff = ((size_t)(row * tileSize + y) * slot->atlasWidth + col * tileSize) * 4;
+            memcpy(&buf[(size_t)y * tileSize * 4], &slot->atlasRgbaCopy[srcOff], (size_t)tileSize * 4);
+        }
+        char path[600];
+        SDL_snprintf(path, sizeof(path), "%s/%03d.png", dir, t);
+        if (RollerWriteRgbaPng(path, buf, tileSize, tileSize) == 0)
+            written++;
+        else
+            SDL_Log("TEX-DUMP: FAILED to write %s", path);
+    }
+    free(buf);
+
+    SDL_Log("TEX-DUMP: wrote %d/%d tiles of bank %d to %s",
+            written, slot->numTiles, slot->tex_idx, dir);
 }
 
 /* --------------------------------------------------------------------------

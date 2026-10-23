@@ -163,6 +163,7 @@ int   g_iSurfaceLogId    = -2;
 bool  g_bRenderStatsLog  = false;
 bool  g_bPickTextures     = false;
 bool  g_bPickTexturesPNG  = false;
+bool  g_bDumpTexturesPNG  = false;
 bool  g_bRenderNative     = false;
 bool  g_pendingClickQuery = false;
 float g_clickQueryNX      = 0.0f;

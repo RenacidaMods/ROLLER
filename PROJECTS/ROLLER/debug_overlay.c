@@ -1491,6 +1491,11 @@ static void DrawDebugPanel(DebugOverlay *pOverlay) {
       if (!bGPU) nk_widget_disable_begin(pCtx);
 
       nk_layout_row_dynamic(pCtx, DEBUG_ROW_H, 1);
+      int bDumpTexturesPNG = (int)g_bDumpTexturesPNG;
+      if (nk_checkbox_label(pCtx, "Dump Textures as PNG", &bDumpTexturesPNG))
+        g_bDumpTexturesPNG = (bool)bDumpTexturesPNG;
+
+      nk_layout_row_dynamic(pCtx, DEBUG_ROW_H, 1);
       int bRenderStatsLog = (int)g_bRenderStatsLog;
       if (nk_checkbox_label(pCtx, "Render Stats Log", &bRenderStatsLog))
         g_bRenderStatsLog = (bool)bRenderStatsLog;
