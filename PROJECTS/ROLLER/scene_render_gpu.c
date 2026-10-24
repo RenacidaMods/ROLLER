@@ -4712,6 +4712,10 @@ void scene_render_gpu_free_texture(SceneRendererGPU *r, SceneTextureHandle handl
             SDL_ReleaseGPUTexture(r->device, s->pairTextures[t]);
             s->pairTextures[t] = NULL;
         }
+        if (s->particleTileTextures[t]) {
+            SDL_ReleaseGPUTexture(r->device, s->particleTileTextures[t]);
+            s->particleTileTextures[t] = NULL;
+        }
     }
     if (s->tex_idx >= 0 && s->tex_idx < 32 && r->texIdxToHandle[s->tex_idx] == handle)
         r->texIdxToHandle[s->tex_idx] = SCENE_TEXTURE_HANDLE_INVALID;
