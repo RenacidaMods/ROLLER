@@ -3333,6 +3333,13 @@ static int InputParseDebugSetting(const char *szName, const char *szValue)
     return 1;
   }
 
+  if (InputStringEqualsNoCase(szName, "HDTextures")) {
+    g_bHDTextures = InputStringEqualsNoCase(szValue, "On") ||
+                    InputStringEqualsNoCase(szValue, "1")  ||
+                    InputStringEqualsNoCase(szValue, "True");
+    return 1;
+  }
+
   if (InputStringEqualsNoCase(szName, "FogDensity")) {
     g_fFogDensity = (float)atof(szValue);
     if (g_fFogDensity < 0.0f) g_fFogDensity = 0.0f;
@@ -3781,6 +3788,7 @@ void InputSaveConfig(void)
   fprintf(fp, "CRTFilter=%s\n",   g_iCRTFilterMode == 1 ? "VGA" :
                                   g_iCRTFilterMode == 2 ? "Hyllian" : "Off");
   fprintf(fp, "SignsOnTop=%s\n",  g_bSignsOnTop  ? "On" : "Off");
+  fprintf(fp, "HDTextures=%s\n",  g_bHDTextures  ? "On" : "Off");
   fprintf(fp, "ShiftFreeze=%s\n", g_bShiftFreezeEnabled ? "On" : "Off");
   fprintf(fp, "KeepWindowSize=%d\n", g_bKeepWindowSize ? 1 : 0);
   if (g_bKeepWindowSize) {

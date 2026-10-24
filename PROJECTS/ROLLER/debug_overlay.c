@@ -1474,6 +1474,13 @@ static void DrawDebugPanel(DebugOverlay *pOverlay) {
       }
 
       nk_layout_row_dynamic(pCtx, DEBUG_ROW_H, 1);
+      int bHDTextures = (int)g_bHDTextures;
+      if (nk_checkbox_label(pCtx, "HD Textures (next race)", &bHDTextures)) {
+        g_bHDTextures = (bool)bHDTextures;
+        InputSaveConfig();
+      }
+
+      nk_layout_row_dynamic(pCtx, DEBUG_ROW_H, 1);
       int bPickTextures = (int)g_bPickTextures;
       if (nk_checkbox_label(pCtx, "Pick Textures", &bPickTextures))
         g_bPickTextures = (bool)bPickTextures;

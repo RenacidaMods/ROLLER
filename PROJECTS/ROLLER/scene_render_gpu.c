@@ -13,8 +13,9 @@
 #include "3d.h"                   /* wide_on */
 #include "roller.h"               /* ROLLERTryAcquireGPUSwapchainTexture */
 #include "png_writer.h"           /* RollerWriteRgbaPng -- "Pick Textures as PNG" / "Dump Textures as PNG" debug exports */
-#include "graphics.h"             /* GetTextureBankSource -- names "Dump Textures as PNG" folders */
+#include "graphics.h"             /* GetTextureBankSource -- names "Dump Textures as PNG" / HD texture folders */
 #include <SDL3/SDL.h>
+#include <SDL3_image/SDL_image.h> /* IMG_Load -- HD replacement tiles */
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
@@ -125,9 +126,9 @@ typedef struct {
     uint8          *atlasRgbaCopy;
     int             atlasWidth;
     int             atlasHeight;
-    /* Folder name for "Dump Textures as PNG": the bank's source file at load
-     * time, lower case, no directory or extension (e.g. "texture1"), or
-     * "bankNN" when the source is unknown. */
+    /* Folder name for "Dump Textures as PNG" and HD replacement tiles: the
+     * bank's source file at load time, lower case, no directory or extension
+     * (e.g. "texture1"), or "bankNN" when the source is unknown. */
     char            dumpName[64];
 } SceneGPUTextureSlot;
 
@@ -4234,6 +4235,163 @@ static SDL_GPUTransferBuffer *stage_rgba_upload(SDL_GPUDevice *dev,
     return tb;
 }
 
+/* Once this many bytes are staged for one bank, submit and start a fresh
+ * command buffer/copy pass. Original banks never get near it (a full 256-tile
+ * bank stages ~16 MB), but HD tiles are 4-64x larger and would otherwise hold
+ * hundreds of MB of upload memory until the bank's single submit. */
+#define SCENE_GPU_UPLOAD_FLUSH_BYTES ((Uint64)64 * 1024 * 1024)
+
+static bool flush_texture_uploads_if_large(SDL_GPUDevice *dev,
+                                           SDL_GPUCommandBuffer **cmd,
+                                           SDL_GPUCopyPass **cp,
+                                           SDL_GPUTransferBuffer **tbs, int *nTbs,
+                                           Uint64 *stagedBytes, Uint64 justStaged)
+{
+    *stagedBytes += justStaged;
+    if (*stagedBytes < SCENE_GPU_UPLOAD_FLUSH_BYTES)
+        return true;
+
+    SDL_EndGPUCopyPass(*cp);
+    *cp = NULL;
+    bool ok = SDL_SubmitGPUCommandBuffer(*cmd);
+    *cmd = NULL;
+    for (int i = 0; i < *nTbs; i++)
+        SDL_ReleaseGPUTransferBuffer(dev, tbs[i]);
+    *nTbs = 0;
+    *stagedBytes = 0;
+    if (!ok) return false;
+
+    *cmd = SDL_AcquireGPUCommandBuffer(dev);
+    if (!*cmd) return false;
+    *cp = SDL_BeginGPUCopyPass(*cmd);
+    return *cp != NULL;
+}
+
+/* --------------------------------------------------------------------------
+ * HD replacement tiles (issue #241)
+ *
+ * With g_bHDTextures on, each 64x64 tile of a bank is replaced by
+ * ../hd_textures/<dumpName>/<tile>.png when that file exists -- the same
+ * folder/file naming "Dump Textures as PNG" writes, relative to FATDATA.
+ * World quad UVs are fractions of a tile, so a bigger tile needs no UV
+ * changes. HD tiles must be square, a power of two from the tile size up to
+ * SCENE_GPU_HD_MAX_TILE_SIZE, and all the same size within a bank (the first
+ * one found sets it). Alpha is snapped to 0/255 at 50%, matching palette
+ * index 0's on/off transparency. Car meshes use their own atlas
+ * (game_render_hardware.c / menu_render_gpu.c) and aren't covered yet.
+ * -------------------------------------------------------------------------- */
+#define SCENE_GPU_HD_MAX_TILE_SIZE 1024
+
+static uint8 *load_hd_tile_rgba(const char *path, int tileSize, int *ioHdSize)
+{
+    SDL_Surface *loaded = IMG_Load(path);
+    if (!loaded) {
+        SDL_Log("HD-TEX: can't read %s: %s", path, SDL_GetError());
+        return NULL;
+    }
+    SDL_Surface *rgba = SDL_ConvertSurface(loaded, SDL_PIXELFORMAT_RGBA32);
+    SDL_DestroySurface(loaded);
+    if (!rgba) {
+        SDL_Log("HD-TEX: can't convert %s: %s", path, SDL_GetError());
+        return NULL;
+    }
+
+    int size = rgba->w;
+    bool pow2 = size > 0 && (size & (size - 1)) == 0;
+    if (rgba->w != rgba->h || size < tileSize || !pow2 || size > SCENE_GPU_HD_MAX_TILE_SIZE
+            || (*ioHdSize && size != *ioHdSize)) {
+        SDL_Log("HD-TEX: skipped %s (%dx%d): must be square, a power of two from %d to %d, "
+                "and the same size as the bank's other HD tiles (%d)",
+                path, rgba->w, rgba->h, tileSize, SCENE_GPU_HD_MAX_TILE_SIZE, *ioHdSize);
+        SDL_DestroySurface(rgba);
+        return NULL;
+    }
+
+    uint8 *out = malloc((size_t)size * size * 4);
+    if (out) {
+        for (int y = 0; y < size; y++) {
+            const uint8 *src = (const uint8 *)rgba->pixels + (size_t)y * rgba->pitch;
+            uint8 *dst = out + (size_t)y * size * 4;
+            for (int x = 0; x < size; x++) {
+                dst[x * 4 + 0] = src[x * 4 + 0];
+                dst[x * 4 + 1] = src[x * 4 + 1];
+                dst[x * 4 + 2] = src[x * 4 + 2];
+                dst[x * 4 + 3] = src[x * 4 + 3] >= 128 ? 255 : 0;
+            }
+        }
+        *ioHdSize = size;
+    }
+    SDL_DestroySurface(rgba);
+    return out;
+}
+
+/* Returns a numTiles-long array of HD tile pixels (NULL entries keep the
+ * original tile), or NULL when the bank has no usable HD tiles. */
+static uint8 **load_hd_tiles(const SceneGPUTextureSlot *slot, int *outHdSize)
+{
+    *outHdSize = 0;
+    if (slot->tileSize != 64) return NULL;
+
+    char dir[512];
+    SDL_snprintf(dir, sizeof(dir), "../hd_textures/%s", slot->dumpName);
+    SDL_PathInfo info;
+    if (!SDL_GetPathInfo(dir, &info) || info.type != SDL_PATHTYPE_DIRECTORY)
+        return NULL;
+
+    uint8 **tiles = calloc((size_t)slot->numTiles, sizeof(*tiles));
+    if (!tiles) return NULL;
+
+    int found = 0, skipped = 0;
+    for (int t = 0; t < slot->numTiles; t++) {
+        char path[600];
+        SDL_snprintf(path, sizeof(path), "%s/%03d.png", dir, t);
+        if (!SDL_GetPathInfo(path, &info) || info.type != SDL_PATHTYPE_FILE)
+            continue;
+        tiles[t] = load_hd_tile_rgba(path, slot->tileSize, outHdSize);
+        if (tiles[t]) found++;
+        else          skipped++;
+    }
+
+    SDL_Log("HD-TEX: %s (bank %d): %d of %d tiles replaced at %dx%d, %d skipped",
+            dir, slot->tex_idx, found, slot->numTiles, *outHdSize, *outHdSize, skipped);
+    if (!found) {
+        free(tiles);
+        return NULL;
+    }
+    return tiles;
+}
+
+static void free_hd_tiles(uint8 **tiles, int numTiles)
+{
+    if (!tiles) return;
+    for (int t = 0; t < numTiles; t++)
+        free(tiles[t]);
+    free(tiles);
+}
+
+/* Builds a 2*hdSize x hdSize wall pair: HD tiles where given, otherwise the
+ * original pair pixels (pairRgba, 2*tileSize x tileSize, including the
+ * last-column row-shift quirk) scaled up nearest-neighbour. */
+static void build_hd_pair(const uint8 *pairRgba, int tileSize,
+                          const uint8 *hdLeft, const uint8 *hdRight,
+                          int hdSize, uint8 *out)
+{
+    int outW = 2 * hdSize;
+    for (int y = 0; y < hdSize; y++) {
+        int sy = y * tileSize / hdSize;
+        for (int x = 0; x < outW; x++) {
+            const uint8 *src;
+            if (x < hdSize && hdLeft)
+                src = hdLeft + ((size_t)y * hdSize + x) * 4;
+            else if (x >= hdSize && hdRight)
+                src = hdRight + ((size_t)y * hdSize + (x - hdSize)) * 4;
+            else
+                src = pairRgba + ((size_t)sy * 2 * tileSize + x * tileSize / hdSize) * 4;
+            memcpy(out + ((size_t)y * outW + x) * 4, src, 4);
+        }
+    }
+}
+
 SceneTextureHandle scene_render_gpu_load_texture(SceneRendererGPU *r,
                                                   const uint8 *pixelData,
                                                   int width, int height,
@@ -4285,16 +4443,23 @@ SceneTextureHandle scene_render_gpu_load_texture(SceneRendererGPU *r,
     s->atlasHeight   = height;
     set_texture_dump_name(s, tex_idx);
 
-    /* One command buffer for all tile + pair uploads for this slot.
-     * Transfer buffers are collected and released after the single submit. */
+    /* HD replacement tiles, NULL when off or none exist for this bank. */
+    int    hdSize  = 0;
+    uint8 **hdTiles = g_bHDTextures ? load_hd_tiles(s, &hdSize) : NULL;
+
+    /* One command buffer for all tile + pair uploads for this slot (more
+     * only if HD tiles push it past SCENE_GPU_UPLOAD_FLUSH_BYTES).
+     * Transfer buffers are collected and released after each submit. */
     SDL_GPUCommandBuffer *uploadCmd = SDL_AcquireGPUCommandBuffer(r->device);
     if (!uploadCmd) {
         s->in_use = 0; free(tileRgba); free(atlasRgba); s->atlasRgbaCopy = NULL;
+        free_hd_tiles(hdTiles, numTiles);
         return SCENE_TEXTURE_HANDLE_INVALID;
     }
     /* Max TBs: numTiles (tiles) + 2*(numTiles-1) (pairs + flipped) + numTiles (particle tiles) <= 4*numTiles */
     SDL_GPUTransferBuffer *tbs[SCENE_GPU_MAX_TILES_PER_SLOT * 4];
     int nTbs = 0;
+    Uint64 stagedBytes = 0;
     bool uploadOk = true;
 
     SDL_GPUCopyPass *cp = SDL_BeginGPUCopyPass(uploadCmd);
@@ -4314,11 +4479,16 @@ SceneTextureHandle scene_render_gpu_load_texture(SceneRendererGPU *r,
                 tileRgba[dstOff+3] = atlasRgba[srcOff+3];
             }
         }
+        bool hd = hdTiles && hdTiles[t];
+        int  upSize = hd ? hdSize : tileSize;
         SDL_GPUTexture *tex = NULL;
-        SDL_GPUTransferBuffer *tb = stage_rgba_upload(r->device, cp, tileRgba, tileSize, tileSize, &tex);
+        SDL_GPUTransferBuffer *tb = stage_rgba_upload(r->device, cp, hd ? hdTiles[t] : tileRgba,
+                                                      upSize, upSize, &tex);
         if (!tb) { uploadOk = false; break; }
         tbs[nTbs++] = tb;
         s->tileTextures[t] = tex;
+        if (!flush_texture_uploads_if_large(r->device, &uploadCmd, &cp, tbs, &nTbs, &stagedBytes,
+                                            (Uint64)upSize * upSize * 4)) { uploadOk = false; break; }
     }
 
     free(tileRgba);
@@ -4346,11 +4516,16 @@ SceneTextureHandle scene_render_gpu_load_texture(SceneRendererGPU *r,
                         ptRgba[dstOff+3] = atlasRgba[srcOff+3];
                     }
                 }
+                bool hd = hdTiles && hdTiles[t];
+                int  upSize = hd ? hdSize : tileSize;
                 SDL_GPUTexture *ptex = NULL;
-                SDL_GPUTransferBuffer *ptb = stage_rgba_upload(r->device, cp, ptRgba, tileSize, tileSize, &ptex);
+                SDL_GPUTransferBuffer *ptb = stage_rgba_upload(r->device, cp, hd ? hdTiles[t] : ptRgba,
+                                                               upSize, upSize, &ptex);
                 if (!ptb) { uploadOk = false; break; }
                 tbs[nTbs++] = ptb;
                 s->particleTileTextures[t] = ptex;
+                if (!flush_texture_uploads_if_large(r->device, &uploadCmd, &cp, tbs, &nTbs, &stagedBytes,
+                                                    (Uint64)upSize * upSize * 4)) { uploadOk = false; break; }
             }
             free(ptRgba);
         }
@@ -4377,6 +4552,7 @@ SceneTextureHandle scene_render_gpu_load_texture(SceneRendererGPU *r,
      * whose row starts with an unrelated grass tile at column 0). */
     int pairW = 2 * tileSize;
     uint8 *pairRgba = uploadOk ? malloc((size_t)(pairW * tileSize * 4)) : NULL;
+    uint8 *hdPairRgba = NULL;
     if (pairRgba) {
         for (int n = 0; n + 1 < numTiles && uploadOk; n++) {
             int col_n  = n % tilesPerRow;
@@ -4411,17 +4587,39 @@ SceneTextureHandle scene_render_gpu_load_texture(SceneRendererGPU *r,
                 }
             }
 
+            /* HD pair when either half has an HD tile; the last-column
+             * quirk's right half never maps to a real tile, so it always
+             * comes from the original pixels. */
+            const uint8 *hdLeft  = hdTiles ? hdTiles[n] : NULL;
+            const uint8 *hdRight = (hdTiles && !lastCol) ? hdTiles[n + 1] : NULL;
+            const uint8 *upPixels = pairRgba;
+            int upW = pairW, upH = tileSize;
+            if (hdLeft || hdRight) {
+                if (!hdPairRgba)
+                    hdPairRgba = malloc((size_t)2 * hdSize * hdSize * 4);
+                if (!hdPairRgba) { uploadOk = false; break; }
+                build_hd_pair(pairRgba, tileSize, hdLeft, hdRight, hdSize, hdPairRgba);
+                upPixels = hdPairRgba;
+                upW = 2 * hdSize;
+                upH = hdSize;
+            }
+
             SDL_GPUTexture *tex = NULL;
-            SDL_GPUTransferBuffer *tb = stage_rgba_upload(r->device, cp, pairRgba, pairW, tileSize, &tex);
+            SDL_GPUTransferBuffer *tb = stage_rgba_upload(r->device, cp, upPixels, upW, upH, &tex);
             if (!tb) { uploadOk = false; break; }
             tbs[nTbs++] = tb;
             s->pairTextures[n] = tex;
+            if (!flush_texture_uploads_if_large(r->device, &uploadCmd, &cp, tbs, &nTbs, &stagedBytes,
+                                                (Uint64)upW * upH * 4)) { uploadOk = false; break; }
         }
         free(pairRgba);
+        free(hdPairRgba);
     }
+    free_hd_tiles(hdTiles, numTiles);
 
-    SDL_EndGPUCopyPass(cp);
-    if (!SDL_SubmitGPUCommandBuffer(uploadCmd))
+    if (cp)
+        SDL_EndGPUCopyPass(cp);
+    if (!uploadCmd || !SDL_SubmitGPUCommandBuffer(uploadCmd))
         uploadOk = false;
 
     for (int i = 0; i < nTbs; i++)
