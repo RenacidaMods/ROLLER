@@ -45,6 +45,7 @@ extern bool  g_bAmbientOcclusion; /* GPU ambient occlusion (ssao.c); off by defa
 extern float g_fAORadius;        /* AO radius in world units (a car is ~1300 long) */
 extern float g_fAOStrength;      /* AO strength; 1.0 = as computed */
 extern float g_fHUDScale;        /* GPU HUD scale 0.25..1.0; 1.0 = original full-screen HUD */
+extern float g_fHUDMapScale;     /* GPU HUD scale for the bottom-left track map; 1.0 = original */
 extern float g_fBrightness;      /* additive brightness; 0.0 = neutral */
 extern float g_fFovMultiplier;   /* FOV multiplier; 1.0 = native */
 extern float g_fMirrorFov;       /* rearview/side mirror FOV multiplier; 0.75 = default (matches SW), <1 = zoom in, >1 = zoom out */

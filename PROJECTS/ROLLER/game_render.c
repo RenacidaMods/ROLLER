@@ -1244,6 +1244,10 @@ void game_render_set_hud_scale(GameRenderer *renderer, float scale) {
     if (renderer) scene_render_gpu_set_hud_scale(renderer->gpu, scale);
 }
 
+void game_render_set_hud_map_scale(GameRenderer *renderer, float scale) {
+    if (renderer) scene_render_gpu_set_hud_map_scale(renderer->gpu, scale);
+}
+
 void game_render_set_fov_multiplier(GameRenderer *renderer, float mult) {
     if (renderer) scene_render_gpu_set_fov_multiplier(renderer->gpu, mult);
 }
@@ -1322,6 +1326,9 @@ void game_render_set_ambient_occlusion_view(GameRenderer *renderer, bool showOnl
     (void)renderer; (void)showOnly;
 }
 void game_render_set_hud_scale(GameRenderer *renderer, float scale) {
+    (void)renderer; (void)scale;
+}
+void game_render_set_hud_map_scale(GameRenderer *renderer, float scale) {
     (void)renderer; (void)scale;
 }
 void game_render_set_fov_multiplier(GameRenderer *renderer, float mult) {

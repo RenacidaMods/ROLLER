@@ -294,6 +294,7 @@ struct SceneRendererGPU {
     /* HUD scale < 1: each HUD piece is drawn shrunk towards its own corner,
      * edge or the centre (see build_hud_piece_vertices). */
     float                    hudScale;
+    float                    hudMapScale;   /* bottom-left pieces (the track map) */
     bool                     hudMenuOpen;   /* in-race menu on the HUD: draw it unscaled */
     SDL_GPUBuffer           *hudPieceVertBuf;
     SDL_GPUTransferBuffer   *hudPieceXfer;
@@ -1775,6 +1776,7 @@ SceneRendererGPU *scene_render_gpu_create(SDL_GPUDevice *device, SDL_Window *win
     r->anisotropyLevel = 3;   /* default 16x, matches old hardcoded value */
     r->renderScale     = 1.0f;
     r->hudScale        = 1.0f;
+    r->hudMapScale     = 1.0f;
     r->ssaoRadius      = 400.0f;
     r->ssaoStrength    = 1.0f;
     r->gamma           = 1.0f;
@@ -2964,7 +2966,7 @@ void scene_render_gpu_begin_frame(SceneRendererGPU *r)
  * game's drawing code, each frame finds the separate HUD pieces (speedo,
  * position box, timers, lap counter, car icons, map...) on a coarse grid,
  * and draws each one scaled towards an anchor: left/right when it reaches
- * within 20% of that screen edge, top/bottom likewise, otherwise centred
+ * into the outer third on that side, top/bottom likewise, otherwise centred
  * on that axis. Choosing by edges rather than by the piece's centre keeps
  * merged pieces (the car icons run into the map) in their corner, and
  * scaling every piece of a group about the same anchor keeps its layout.
@@ -2972,19 +2974,24 @@ void scene_render_gpu_begin_frame(SceneRendererGPU *r)
 #define HUD_PIECE_CELL     4     /* grid cell size in HUD pixels */
 #define HUD_PIECE_MAX      64    /* more pieces than this: draw unscaled */
 #define HUD_PIECE_GRID_MAX 512   /* max cells per axis (2048 HUD pixels) */
-#define HUD_PIECE_EDGE     0.2f  /* "near an edge": within 20% of the HUD size */
+#define HUD_PIECE_EDGE     0.33f /* "near an edge": starts/ends in the outer third */
 /* A cell keeps counting as HUD for this long after it was last drawn, so
  * pieces are grouped from recent history rather than one frame: otherwise
  * a moving map dot briefly touching the lives icons regroups them for a
  * frame and they jump to another anchor. */
 #define HUD_PIECE_HOLD_MS  2000
+/* Cells this far apart (3 cells = 12 HUD pixels) join one piece: the track
+ * map is thin lines with gaps, and at 1 cell it split into fragments that
+ * were pinned to different anchors and pulled apart. */
+#define HUD_PIECE_JOIN     3
 
 /* Fills verts (6 per piece) for the HUD pieces found in pix (w x h,
- * index 0 = empty), scaled by `scale` towards their anchors, in the same
- * NDC/UV convention as hudVertBuf. Returns the vertex count, or 0 to fall
- * back to the unscaled full-screen quad. */
+ * index 0 = empty), scaled towards their anchors, in the same NDC/UV
+ * convention as hudVertBuf: by mapScale for pieces pinned to the bottom-left
+ * corner (where this game's HUD keeps the track map), by scale otherwise.
+ * Returns the vertex count, or 0 to fall back to the unscaled full quad. */
 static int build_hud_piece_vertices(const uint8 *pix, int w, int h, float scale,
-                                    SceneGPUHUDVertex *verts)
+                                    float mapScale, SceneGPUHUDVertex *verts)
 {
     int cw = (w + HUD_PIECE_CELL - 1) / HUD_PIECE_CELL;
     int ch = (h + HUD_PIECE_CELL - 1) / HUD_PIECE_CELL;
@@ -3023,8 +3030,8 @@ static int build_hud_piece_vertices(const uint8 *pix, int w, int h, float scale,
         if (!s_occupied[start] || s_visited[start]) continue;
         if (pieces == HUD_PIECE_MAX) return 0;
 
-        /* Flood fill over touching cells (8-connected), so glyphs within a
-         * few pixels of each other join the same piece. */
+        /* Flood fill joining cells up to HUD_PIECE_JOIN apart, so glyphs
+         * and map line fragments near each other form one piece. */
         int minX = cw, minY = ch, maxX = -1, maxY = -1, sp = 0;
         s_stack[sp++] = start;
         s_visited[start] = 1;
@@ -3034,8 +3041,8 @@ static int build_hud_piece_vertices(const uint8 *pix, int w, int h, float scale,
             if (cx > maxX) maxX = cx;
             if (cy < minY) minY = cy;
             if (cy > maxY) maxY = cy;
-            for (int dy = -1; dy <= 1; dy++) {
-                for (int dx = -1; dx <= 1; dx++) {
+            for (int dy = -HUD_PIECE_JOIN; dy <= HUD_PIECE_JOIN; dy++) {
+                for (int dx = -HUD_PIECE_JOIN; dx <= HUD_PIECE_JOIN; dx++) {
                     int nx = cx + dx, ny = cy + dy;
                     if (nx < 0 || ny < 0 || nx >= cw || ny >= ch) continue;
                     int n = ny * cw + nx;
@@ -3060,9 +3067,10 @@ static int build_hud_piece_vertices(const uint8 *pix, int w, int h, float scale,
         float ax = (nearLeft == nearRight) ? w * 0.5f : nearLeft ? 0.0f : (float)w;
         float ay = (nearTop == nearBottom) ? h * 0.5f : nearTop  ? 0.0f : (float)h;
 
+        float s = (ax == 0.0f && ay == (float)h) ? mapScale : scale;
         float u0 = x0 / w, v0 = y0 / h, u1 = x1 / w, v1 = y1 / h;
-        float sx0 = (ax + (x0 - ax) * scale) / w, sx1 = (ax + (x1 - ax) * scale) / w;
-        float sy0 = (ay + (y0 - ay) * scale) / h, sy1 = (ay + (y1 - ay) * scale) / h;
+        float sx0 = (ax + (x0 - ax) * s) / w, sx1 = (ax + (x1 - ax) * s) / w;
+        float sy0 = (ay + (y0 - ay) * s) / h, sy1 = (ay + (y1 - ay) * s) / h;
         /* UV (0,0) is NDC (-1, +1), as in hudVertBuf. */
         float nx0 = sx0 * 2.0f - 1.0f, nx1 = sx1 * 2.0f - 1.0f;
         float ny0 = 1.0f - sy0 * 2.0f, ny1 = 1.0f - sy1 * 2.0f;
@@ -3281,9 +3289,10 @@ static bool scene_render_gpu_end_frame_internal(SceneRendererGPU *r,
 
                 /* HUD scale: this frame's piece quads, uploaded in the same pass. */
                 r->hudPieceVertCount = 0;
-                if (r->hudScale < 0.999f && !r->hudMenuOpen) {
+                if ((r->hudScale < 0.999f || r->hudMapScale < 0.999f) && !r->hudMenuOpen) {
                     static SceneGPUHUDVertex s_pieceVerts[HUD_PIECE_MAX * 6];
-                    int n = build_hud_piece_vertices(r->hudSrcBuf, hw, hh, r->hudScale, s_pieceVerts);
+                    int n = build_hud_piece_vertices(r->hudSrcBuf, hw, hh, r->hudScale,
+                                                     r->hudMapScale, s_pieceVerts);
                     if (n > 0 && !r->hudPieceVertBuf) {
                         SDL_GPUBufferCreateInfo bi = {
                             .usage = SDL_GPU_BUFFERUSAGE_VERTEX, .size = (Uint32)sizeof(s_pieceVerts)
@@ -3759,7 +3768,7 @@ static bool scene_render_gpu_end_frame_internal(SceneRendererGPU *r,
         struct { float vigStrength; float _pad[3]; } hpu = { r->vigStrength, {0} };
         SDL_GPUBufferBinding hvbb = {.buffer = r->hudVertBuf};
         tsb.sampler = r->sampler;
-        if (r->hudPieceVertCount > 0 && r->hudScale < 0.999f) {
+        if (r->hudPieceVertCount > 0) {
             /* Scaled HUD: the vignette (drawn by the full quad's transparent
              * area) comes from a full quad over a transparent texture, then
              * the pieces are drawn shrunk towards their anchors, without
@@ -4229,6 +4238,12 @@ void scene_render_gpu_set_hud_scale(SceneRendererGPU *r, float scale)
 {
     if (!r) return;
     r->hudScale = (scale < 0.25f) ? 0.25f : (scale > 1.0f) ? 1.0f : scale;
+}
+
+void scene_render_gpu_set_hud_map_scale(SceneRendererGPU *r, float scale)
+{
+    if (!r) return;
+    r->hudMapScale = (scale < 0.25f) ? 0.25f : (scale > 1.0f) ? 1.0f : scale;
 }
 
 void scene_render_gpu_set_hud_menu_open(SceneRendererGPU *r, bool open)

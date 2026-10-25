@@ -147,6 +147,9 @@ void scene_render_gpu_set_ambient_occlusion_view(SceneRendererGPU *r, bool showO
 /* Shrink the HUD (0.25..1.0): each HUD piece is drawn scaled towards its own
  * corner, edge or the centre. 1.0 = the original full-screen HUD. */
 void scene_render_gpu_set_hud_scale(SceneRendererGPU *r, float scale);
+/* Separate scale (0.25..1.0) for HUD pieces pinned to the bottom-left
+ * corner, where the game's HUD keeps the track map. */
+void scene_render_gpu_set_hud_map_scale(SceneRendererGPU *r, float scale);
 /* Set each frame: while an in-race menu is drawn on the HUD, HUD scale is
  * suspended so the menu isn't split into separately scaled pieces. */
 void scene_render_gpu_set_hud_menu_open(SceneRendererGPU *r, bool open);
