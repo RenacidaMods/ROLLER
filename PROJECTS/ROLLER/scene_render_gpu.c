@@ -291,6 +291,13 @@ struct SceneRendererGPU {
     SDL_GPUTexture          *hudOverlayTex; /* re-uploaded each frame */
     SDL_GPUTransferBuffer   *hudXfer;       /* for the HUD pixel upload */
     int                      hudTexW, hudTexH;
+    /* HUD scale < 1: each HUD piece is drawn shrunk towards its own corner,
+     * edge or the centre (see build_hud_piece_vertices). */
+    float                    hudScale;
+    SDL_GPUBuffer           *hudPieceVertBuf;
+    SDL_GPUTransferBuffer   *hudPieceXfer;
+    int                      hudPieceVertCount;
+    SDL_GPUTexture          *hudClearTex;   /* 1x1 transparent: vignette-only pass */
 
     /* Updated from game_render.c each frame before end_frame. */
     uint8 *hudSrcBuf;
@@ -1766,6 +1773,7 @@ SceneRendererGPU *scene_render_gpu_create(SDL_GPUDevice *device, SDL_Window *win
         : SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
     r->anisotropyLevel = 3;   /* default 16x, matches old hardcoded value */
     r->renderScale     = 1.0f;
+    r->hudScale        = 1.0f;
     r->ssaoRadius      = 400.0f;
     r->ssaoStrength    = 1.0f;
     r->gamma           = 1.0f;
@@ -1921,6 +1929,10 @@ SceneRendererGPU *scene_render_gpu_create(SDL_GPUDevice *device, SDL_Window *win
     r->hudVertBuf = scene_render_gpu_upload_buffer(device, SDL_GPU_BUFFERUSAGE_VERTEX,
                                       hudVerts, sizeof(hudVerts));
     if (!r->hudVertBuf) goto fail;
+    /* Transparent stand-in for the HUD texture: drawing the full quad with it
+     * leaves only the vignette, for when the HUD itself is drawn scaled. */
+    const uint8 clearPixel[4] = {0, 0, 0, 0};
+    r->hudClearTex = scene_render_gpu_upload_rgba(device, clearPixel, 1, 1, false);
 
     /* ---- CPU-side vertex + draw-cmd arrays ---- */
     r->vertices  = malloc(SCENE_GPU_MAX_VERTICES * sizeof(SceneGPUVertex));
@@ -2024,6 +2036,9 @@ void scene_render_gpu_destroy(SceneRendererGPU *r)
     if (r->msaaDepthTex)  SDL_ReleaseGPUTexture(r->device, r->msaaDepthTex);
     if (r->hudOverlayTex) SDL_ReleaseGPUTexture(r->device, r->hudOverlayTex);
     if (r->hudXfer)       SDL_ReleaseGPUTransferBuffer(r->device, r->hudXfer);
+    if (r->hudPieceVertBuf) SDL_ReleaseGPUBuffer(r->device, r->hudPieceVertBuf);
+    if (r->hudPieceXfer)    SDL_ReleaseGPUTransferBuffer(r->device, r->hudPieceXfer);
+    if (r->hudClearTex)     SDL_ReleaseGPUTexture(r->device, r->hudClearTex);
     if (r->hudVertBuf)    SDL_ReleaseGPUBuffer(r->device, r->hudVertBuf);
     if (r->skyVertBuf) SDL_ReleaseGPUBuffer(r->device, r->skyVertBuf);
     if (r->skyVertXfer) SDL_ReleaseGPUTransferBuffer(r->device, r->skyVertXfer);
@@ -2940,6 +2955,106 @@ void scene_render_gpu_begin_frame(SceneRendererGPU *r)
     r->cmdBuf = SDL_AcquireGPUCommandBuffer(r->device);
 }
 
+/* --------------------------------------------------------------------------
+ * HUD scale
+ *
+ * The HUD is the game's own 640x400 software overlay (palette index 0 =
+ * transparent), stretched over the view. To shrink it without touching the
+ * game's drawing code, each frame finds the separate HUD pieces (speedo,
+ * position box, timers, lap counter, car icons, map...) on a coarse grid,
+ * and draws each one scaled towards an anchor: left/right when it reaches
+ * within 20% of that screen edge, top/bottom likewise, otherwise centred
+ * on that axis. Choosing by edges rather than by the piece's centre keeps
+ * merged pieces (the car icons run into the map) in their corner, and
+ * scaling every piece of a group about the same anchor keeps its layout.
+ * -------------------------------------------------------------------------- */
+#define HUD_PIECE_CELL     4     /* grid cell size in HUD pixels */
+#define HUD_PIECE_MAX      64    /* more pieces than this: draw unscaled */
+#define HUD_PIECE_GRID_MAX 512   /* max cells per axis (2048 HUD pixels) */
+#define HUD_PIECE_EDGE     0.2f  /* "near an edge": within 20% of the HUD size */
+
+/* Fills verts (6 per piece) for the HUD pieces found in pix (w x h,
+ * index 0 = empty), scaled by `scale` towards their anchors, in the same
+ * NDC/UV convention as hudVertBuf. Returns the vertex count, or 0 to fall
+ * back to the unscaled full-screen quad. */
+static int build_hud_piece_vertices(const uint8 *pix, int w, int h, float scale,
+                                    SceneGPUHUDVertex *verts)
+{
+    int cw = (w + HUD_PIECE_CELL - 1) / HUD_PIECE_CELL;
+    int ch = (h + HUD_PIECE_CELL - 1) / HUD_PIECE_CELL;
+    if (cw > HUD_PIECE_GRID_MAX || ch > HUD_PIECE_GRID_MAX) return 0;
+
+    static uint8 s_occupied[HUD_PIECE_GRID_MAX * HUD_PIECE_GRID_MAX];
+    static uint8 s_visited[HUD_PIECE_GRID_MAX * HUD_PIECE_GRID_MAX];
+    static int   s_stack[HUD_PIECE_GRID_MAX * HUD_PIECE_GRID_MAX];
+    memset(s_occupied, 0, (size_t)cw * ch);
+    memset(s_visited, 0, (size_t)cw * ch);
+
+    for (int y = 0; y < h; y++) {
+        const uint8 *row = pix + (size_t)y * w;
+        uint8 *occRow = s_occupied + (size_t)(y / HUD_PIECE_CELL) * cw;
+        for (int x = 0; x < w; x++)
+            if (row[x]) occRow[x / HUD_PIECE_CELL] = 1;
+    }
+
+    int pieces = 0, vertCount = 0;
+    for (int start = 0; start < cw * ch; start++) {
+        if (!s_occupied[start] || s_visited[start]) continue;
+        if (pieces == HUD_PIECE_MAX) return 0;
+
+        /* Flood fill over touching cells (8-connected), so glyphs within a
+         * few pixels of each other join the same piece. */
+        int minX = cw, minY = ch, maxX = -1, maxY = -1, sp = 0;
+        s_stack[sp++] = start;
+        s_visited[start] = 1;
+        while (sp > 0) {
+            int c = s_stack[--sp], cx = c % cw, cy = c / cw;
+            if (cx < minX) minX = cx;
+            if (cx > maxX) maxX = cx;
+            if (cy < minY) minY = cy;
+            if (cy > maxY) maxY = cy;
+            for (int dy = -1; dy <= 1; dy++) {
+                for (int dx = -1; dx <= 1; dx++) {
+                    int nx = cx + dx, ny = cy + dy;
+                    if (nx < 0 || ny < 0 || nx >= cw || ny >= ch) continue;
+                    int n = ny * cw + nx;
+                    if (s_occupied[n] && !s_visited[n]) {
+                        s_visited[n] = 1;
+                        s_stack[sp++] = n;
+                    }
+                }
+            }
+        }
+        pieces++;
+
+        float x0 = (float)(minX * HUD_PIECE_CELL), y0 = (float)(minY * HUD_PIECE_CELL);
+        float x1 = (float)((maxX + 1) * HUD_PIECE_CELL), y1 = (float)((maxY + 1) * HUD_PIECE_CELL);
+        if (x1 > (float)w) x1 = (float)w;
+        if (y1 > (float)h) y1 = (float)h;
+
+        bool nearLeft   = x0 < w * HUD_PIECE_EDGE;
+        bool nearRight  = x1 > w * (1.0f - HUD_PIECE_EDGE);
+        bool nearTop    = y0 < h * HUD_PIECE_EDGE;
+        bool nearBottom = y1 > h * (1.0f - HUD_PIECE_EDGE);
+        float ax = (nearLeft == nearRight) ? w * 0.5f : nearLeft ? 0.0f : (float)w;
+        float ay = (nearTop == nearBottom) ? h * 0.5f : nearTop  ? 0.0f : (float)h;
+
+        float u0 = x0 / w, v0 = y0 / h, u1 = x1 / w, v1 = y1 / h;
+        float sx0 = (ax + (x0 - ax) * scale) / w, sx1 = (ax + (x1 - ax) * scale) / w;
+        float sy0 = (ay + (y0 - ay) * scale) / h, sy1 = (ay + (y1 - ay) * scale) / h;
+        /* UV (0,0) is NDC (-1, +1), as in hudVertBuf. */
+        float nx0 = sx0 * 2.0f - 1.0f, nx1 = sx1 * 2.0f - 1.0f;
+        float ny0 = 1.0f - sy0 * 2.0f, ny1 = 1.0f - sy1 * 2.0f;
+        SceneGPUHUDVertex q[6] = {
+            {nx0, ny0, u0, v0}, {nx1, ny0, u1, v0}, {nx1, ny1, u1, v1},
+            {nx0, ny0, u0, v0}, {nx1, ny1, u1, v1}, {nx0, ny1, u0, v1}
+        };
+        memcpy(&verts[vertCount], q, sizeof(q));
+        vertCount += 6;
+    }
+    return vertCount;
+}
+
 static bool scene_render_gpu_end_frame_internal(SceneRendererGPU *r,
                                                  uint8 *pbyPixels,
                                                  Uint32 uiBufferSize,
@@ -3142,6 +3257,36 @@ static bool scene_render_gpu_end_frame_internal(SceneRendererGPU *r,
                     .w = (Uint32)hw, .h = (Uint32)hh, .d = 1
                 };
                 SDL_UploadToGPUTexture(cp, &srcl, &dstr, false);
+
+                /* HUD scale: this frame's piece quads, uploaded in the same pass. */
+                r->hudPieceVertCount = 0;
+                if (r->hudScale < 0.999f) {
+                    static SceneGPUHUDVertex s_pieceVerts[HUD_PIECE_MAX * 6];
+                    int n = build_hud_piece_vertices(r->hudSrcBuf, hw, hh, r->hudScale, s_pieceVerts);
+                    if (n > 0 && !r->hudPieceVertBuf) {
+                        SDL_GPUBufferCreateInfo bi = {
+                            .usage = SDL_GPU_BUFFERUSAGE_VERTEX, .size = (Uint32)sizeof(s_pieceVerts)
+                        };
+                        r->hudPieceVertBuf = SDL_CreateGPUBuffer(r->device, &bi);
+                        SDL_GPUTransferBufferCreateInfo pti = {
+                            .usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD, .size = (Uint32)sizeof(s_pieceVerts)
+                        };
+                        r->hudPieceXfer = SDL_CreateGPUTransferBuffer(r->device, &pti);
+                    }
+                    if (n > 0 && r->hudPieceVertBuf && r->hudPieceXfer) {
+                        Uint32 bytes = (Uint32)n * (Uint32)sizeof(SceneGPUHUDVertex);
+                        void *pm = SDL_MapGPUTransferBuffer(r->device, r->hudPieceXfer, true);
+                        if (pm) {
+                            memcpy(pm, s_pieceVerts, bytes);
+                            SDL_UnmapGPUTransferBuffer(r->device, r->hudPieceXfer);
+                            SDL_GPUTransferBufferLocation psrc = { .transfer_buffer = r->hudPieceXfer };
+                            SDL_GPUBufferRegion pdst = { .buffer = r->hudPieceVertBuf, .size = bytes };
+                            SDL_UploadToGPUBuffer(cp, &psrc, &pdst, true);
+                            r->hudPieceVertCount = n;
+                        }
+                    }
+                }
+
                 SDL_EndGPUCopyPass(cp);
                 drawHUD = true;
             }
@@ -3591,13 +3736,34 @@ static bool scene_render_gpu_end_frame_internal(SceneRendererGPU *r,
         }
         SDL_BindGPUGraphicsPipeline(hrp, r->hudPipeline);
         struct { float vigStrength; float _pad[3]; } hpu = { r->vigStrength, {0} };
-        SDL_PushGPUFragmentUniformData(r->cmdBuf, 0, &hpu, sizeof(hpu));
         SDL_GPUBufferBinding hvbb = {.buffer = r->hudVertBuf};
-        SDL_BindGPUVertexBuffers(hrp, 0, &hvbb, 1);
-        tsb.texture = r->hudOverlayTex;
         tsb.sampler = r->sampler;
-        SDL_BindGPUFragmentSamplers(hrp, 0, &tsb, 1);
-        SDL_DrawGPUPrimitives(hrp, 6, 1, 0, 0);
+        if (r->hudPieceVertCount > 0 && r->hudScale < 0.999f) {
+            /* Scaled HUD: the vignette (drawn by the full quad's transparent
+             * area) comes from a full quad over a transparent texture, then
+             * the pieces are drawn shrunk towards their anchors, without
+             * vignette darkening (their UVs no longer match screen position). */
+            if (r->vigStrength > 0.0f && r->hudClearTex) {
+                SDL_PushGPUFragmentUniformData(r->cmdBuf, 0, &hpu, sizeof(hpu));
+                SDL_BindGPUVertexBuffers(hrp, 0, &hvbb, 1);
+                tsb.texture = r->hudClearTex;
+                SDL_BindGPUFragmentSamplers(hrp, 0, &tsb, 1);
+                SDL_DrawGPUPrimitives(hrp, 6, 1, 0, 0);
+            }
+            hpu.vigStrength = 0.0f;
+            SDL_PushGPUFragmentUniformData(r->cmdBuf, 0, &hpu, sizeof(hpu));
+            SDL_GPUBufferBinding pvbb = {.buffer = r->hudPieceVertBuf};
+            SDL_BindGPUVertexBuffers(hrp, 0, &pvbb, 1);
+            tsb.texture = r->hudOverlayTex;
+            SDL_BindGPUFragmentSamplers(hrp, 0, &tsb, 1);
+            SDL_DrawGPUPrimitives(hrp, (Uint32)r->hudPieceVertCount, 1, 0, 0);
+        } else {
+            SDL_PushGPUFragmentUniformData(r->cmdBuf, 0, &hpu, sizeof(hpu));
+            SDL_BindGPUVertexBuffers(hrp, 0, &hvbb, 1);
+            tsb.texture = r->hudOverlayTex;
+            SDL_BindGPUFragmentSamplers(hrp, 0, &tsb, 1);
+            SDL_DrawGPUPrimitives(hrp, 6, 1, 0, 0);
+        }
         SDL_EndGPURenderPass(hrp);
     }
 
@@ -4036,6 +4202,12 @@ void scene_render_gpu_set_ambient_occlusion_view(SceneRendererGPU *r, bool showO
 {
     if (!r) return;
     r->ssaoShowOnly = showOnly;
+}
+
+void scene_render_gpu_set_hud_scale(SceneRendererGPU *r, float scale)
+{
+    if (!r) return;
+    r->hudScale = (scale < 0.25f) ? 0.25f : (scale > 1.0f) ? 1.0f : scale;
 }
 
 void scene_render_gpu_set_brightness(SceneRendererGPU *r, float brightness)

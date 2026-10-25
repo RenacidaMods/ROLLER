@@ -172,6 +172,7 @@ bool  g_bHDTextures       = false;
 bool  g_bAmbientOcclusion = false;
 float g_fAORadius         = 400.0f;
 float g_fAOStrength       = 1.0f;
+float g_fHUDScale         = 1.0f;
 bool  g_bRenderNative     = false;
 bool  g_pendingClickQuery = false;
 float g_clickQueryNX      = 0.0f;

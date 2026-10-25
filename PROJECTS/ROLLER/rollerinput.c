@@ -3400,6 +3400,12 @@ static int InputParseDebugSetting(const char *szName, const char *szValue)
     return 1;
   }
 
+  if (InputStringEqualsNoCase(szName, "HUDScale")) {
+    g_fHUDScale = (float)atof(szValue);
+    if (g_fHUDScale < 0.25f || g_fHUDScale > 1.0f) g_fHUDScale = 1.0f;
+    return 1;
+  }
+
   if (InputStringEqualsNoCase(szName, "AOStrength")) {
     g_fAOStrength = (float)atof(szValue);
     if (g_fAOStrength < 0.0f) g_fAOStrength = 0.0f;
@@ -3839,6 +3845,7 @@ void InputSaveConfig(void)
   fprintf(fp, "AmbientOcclusion=%s\n", g_bAmbientOcclusion ? "On" : "Off");
   fprintf(fp, "AORadius=%.0f\n", g_fAORadius);
   fprintf(fp, "AOStrength=%.2f\n", g_fAOStrength);
+  fprintf(fp, "HUDScale=%.2f\n", g_fHUDScale);
   fprintf(fp, "Brightness=%.2f\n", g_fBrightness);
   fprintf(fp, "FovMultiplier=%.2f\n", g_fFovMultiplier);
   fprintf(fp, "MirrorFov=%.2f\n", g_fMirrorFov);

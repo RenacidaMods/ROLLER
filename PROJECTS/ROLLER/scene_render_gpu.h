@@ -144,6 +144,9 @@ void scene_render_gpu_set_ambient_occlusion(SceneRendererGPU *r, bool enabled,
                                             float radius, float strength);
 /* Debug: while AO is on, show the AO term itself (greyscale) instead of the scene. */
 void scene_render_gpu_set_ambient_occlusion_view(SceneRendererGPU *r, bool showOnly);
+/* Shrink the HUD (0.25..1.0): each HUD piece is drawn scaled towards its own
+ * corner, edge or the centre. 1.0 = the original full-screen HUD. */
+void scene_render_gpu_set_hud_scale(SceneRendererGPU *r, float scale);
 
 /* brightness: additive offset; 0.0 = neutral, positive = brighter, negative = darker */
 void scene_render_gpu_set_brightness(SceneRendererGPU *r, float brightness);

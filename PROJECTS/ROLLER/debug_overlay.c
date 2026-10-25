@@ -1100,6 +1100,17 @@ static void DrawLookSettings(struct nk_context *pCtx, bool bGPU) {
       InputSaveConfig();
     }
   }
+
+  { char buf[20]; snprintf(buf, sizeof(buf), "HUD scale %.0f%%", g_fHUDScale * 100.0f);
+    nk_layout_row_dynamic(pCtx, DEBUG_ROW_H, 2);
+    nk_label(pCtx, buf, NK_TEXT_LEFT);
+    float fNewHud = nk_slide_float(pCtx, 0.4f, g_fHUDScale, 1.0f, 0.05f);
+    if (fNewHud != g_fHUDScale) {
+      g_fHUDScale = fNewHud;
+      game_render_set_hud_scale(g_pGameRenderer, g_fHUDScale);
+      InputSaveConfig();
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1668,6 +1679,7 @@ static void DrawDebugPanel(DebugOverlay *pOverlay) {
         g_uFogColor       = 0xB3BFCCu;
         g_fFovMultiplier  = 1.0f;  g_fVigStrength    = 0.0f;
         g_bAmbientOcclusion = false; g_fAORadius = 400.0f; g_fAOStrength = 1.0f;
+        g_fHUDScale       = 1.0f;
         g_fMirrorFov      = 0.75f;
         g_fBrightness     = 0.0f;  g_fContrast       = 1.0f;
         g_fGamma          = 1.0f;  g_fSaturation     = 1.0f;
@@ -1690,6 +1702,7 @@ static void DrawDebugPanel(DebugOverlay *pOverlay) {
         game_render_set_vignette(g_pGameRenderer,        g_fVigStrength);
         game_render_set_ambient_occlusion(g_pGameRenderer, g_bAmbientOcclusion,
                                           g_fAORadius, g_fAOStrength);
+        game_render_set_hud_scale(g_pGameRenderer,       g_fHUDScale);
         game_render_set_brightness(g_pGameRenderer,      g_fBrightness);
         game_render_set_contrast(g_pGameRenderer,        g_fContrast);
         game_render_set_gamma(g_pGameRenderer,           g_fGamma);
