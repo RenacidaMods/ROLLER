@@ -1370,6 +1370,38 @@ static void DrawDebugPanel(DebugOverlay *pOverlay) {
         }
       }
 
+      /* Ambient occlusion (ssao.c): needs MSAA off, since MSAA depth can't
+       * be sampled; the label says so rather than silently doing nothing. */
+      {
+        bool bAOChanged = false;
+        nk_layout_row_dynamic(pCtx, DEBUG_ROW_H, 1);
+        int bAO = (int)g_bAmbientOcclusion;
+        if (nk_checkbox_label(pCtx, g_iAntiAliasing ? "Ambient occlusion (needs AA off)"
+                                                     : "Ambient occlusion", &bAO)) {
+          g_bAmbientOcclusion = (bool)bAO;
+          bAOChanged = true;
+        }
+        if (g_bAmbientOcclusion) {
+          char buf[24];
+          snprintf(buf, sizeof(buf), "AO radius %.0f", g_fAORadius);
+          nk_layout_row_dynamic(pCtx, DEBUG_ROW_H, 2);
+          nk_label(pCtx, buf, NK_TEXT_LEFT);
+          float fNewRadius = nk_slide_float(pCtx, 100.0f, g_fAORadius, 2000.0f, 25.0f);
+          if (fNewRadius != g_fAORadius) { g_fAORadius = fNewRadius; bAOChanged = true; }
+
+          snprintf(buf, sizeof(buf), "AO strength %.2f", g_fAOStrength);
+          nk_layout_row_dynamic(pCtx, DEBUG_ROW_H, 2);
+          nk_label(pCtx, buf, NK_TEXT_LEFT);
+          float fNewStrength = nk_slide_float(pCtx, 0.0f, g_fAOStrength, 2.0f, 0.05f);
+          if (fNewStrength != g_fAOStrength) { g_fAOStrength = fNewStrength; bAOChanged = true; }
+        }
+        if (bAOChanged) {
+          game_render_set_ambient_occlusion(g_pGameRenderer, g_bAmbientOcclusion,
+                                            g_fAORadius, g_fAOStrength);
+          InputSaveConfig();
+        }
+      }
+
       { char buf[20]; snprintf(buf, sizeof(buf), "Brightness %.2f", g_fBrightness);
         nk_layout_row_dynamic(pCtx, DEBUG_ROW_H, 2);
         nk_label(pCtx, buf, NK_TEXT_LEFT);
@@ -1581,6 +1613,7 @@ static void DrawDebugPanel(DebugOverlay *pOverlay) {
         g_fFogStart       = 0.0f;  g_fFogDensity     = 0.0f;
         g_uFogColor       = 0xB3BFCCu;
         g_fFovMultiplier  = 1.0f;  g_fVigStrength    = 0.0f;
+        g_bAmbientOcclusion = false; g_fAORadius = 400.0f; g_fAOStrength = 1.0f;
         g_fMirrorFov      = 0.75f;
         g_fBrightness     = 0.0f;  g_fContrast       = 1.0f;
         g_fGamma          = 1.0f;  g_fSaturation     = 1.0f;
@@ -1601,6 +1634,8 @@ static void DrawDebugPanel(DebugOverlay *pOverlay) {
             ( g_uFogColor        & 0xFF) / 255.0f);
         game_render_set_fov_multiplier(g_pGameRenderer,  g_fFovMultiplier);
         game_render_set_vignette(g_pGameRenderer,        g_fVigStrength);
+        game_render_set_ambient_occlusion(g_pGameRenderer, g_bAmbientOcclusion,
+                                          g_fAORadius, g_fAOStrength);
         game_render_set_brightness(g_pGameRenderer,      g_fBrightness);
         game_render_set_contrast(g_pGameRenderer,        g_fContrast);
         game_render_set_gamma(g_pGameRenderer,           g_fGamma);

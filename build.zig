@@ -209,6 +209,7 @@ pub fn build(b: *std.Build) void {
                 "PROJECTS/ROLLER/crashdump.c",
                 "PROJECTS/ROLLER/menu_render_gpu.c",
                 "PROJECTS/ROLLER/crt_filter.c",
+                "PROJECTS/ROLLER/ssao.c",
                 "PROJECTS/ROLLER/game_render_hardware.c",
                 "PROJECTS/ROLLER/scene_render_gpu.c",
             },

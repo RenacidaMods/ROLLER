@@ -39,6 +39,8 @@ void game_render_set_saturation(GameRenderer *renderer, float saturation);
 void game_render_set_contrast(GameRenderer *renderer, float contrast);
 /* Vignette: 0=off, higher=darker edges */
 void game_render_set_vignette(GameRenderer *renderer, float strength);
+void game_render_set_ambient_occlusion(GameRenderer *renderer, bool enabled,
+                                       float radius, float strength);
 /* FOV multiplier on top of game camera: 1.0=native, <1=zoom in, >1=zoom out */
 void game_render_set_fov_multiplier(GameRenderer *renderer, float mult);
 /* Compatibility: emulate SW rasterizer's extra-dark one-pixel track-darken quad border */

@@ -275,3 +275,33 @@ with open(r'$W_CRT', 'w') as f:
     f.write(h)
 "
 echo "Generated $CRT_HEADER"
+
+# --- SSAO (ambient occlusion) shaders: SPIR-V, MSL and DXIL in one header ---
+SSAO_HEADER="$SCRIPT_DIR/../ssao_shaders.h"
+if command -v cygpath >/dev/null 2>&1; then
+    W_SSAO="$(cygpath -w "$SSAO_HEADER")"
+else
+    W_SSAO="$SSAO_HEADER"
+fi
+
+echo "Compiling SSAO shaders..."
+for fmt in "SPIRV spv" "MSL msl" "DXIL dxil"; do
+    set -- $fmt
+    "$SHADERCROSS" "$SCRIPT_DIR/crt_vertex.hlsl"           -s HLSL -d "$1" -t vertex   -e main -o "$OUT_DIR/ssao_fullscreen_vertex.$2"
+    "$SHADERCROSS" "$SCRIPT_DIR/ssao_ao_pixel.hlsl"        -s HLSL -d "$1" -t fragment -e main -o "$OUT_DIR/ssao_ao_pixel.$2"
+    "$SHADERCROSS" "$SCRIPT_DIR/ssao_composite_pixel.hlsl" -s HLSL -d "$1" -t fragment -e main -o "$OUT_DIR/ssao_composite_pixel.$2"
+done
+
+echo "Generating ssao_shaders.h..."
+"$PYTHON" -c "
+$EMBED_FN
+out_dir = r'$W_OUT'
+h = '#ifndef SSAO_SHADERS_H\n#define SSAO_SHADERS_H\n\n'
+for name in ['ssao_fullscreen_vertex', 'ssao_ao_pixel', 'ssao_composite_pixel']:
+    for fmt, ext in [('spirv', 'spv'), ('msl', 'msl'), ('dxil', 'dxil')]:
+        h += embed(os.path.join(out_dir, f'{name}.{ext}'), f'{name}_{fmt}') + '\n'
+h += '#endif\n'
+with open(r'$W_SSAO', 'w') as f:
+    f.write(h)
+"
+echo "Generated $SSAO_HEADER"

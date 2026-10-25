@@ -1,5 +1,6 @@
 #include "scene_render_gpu.h"
 #include "crt_filter.h"
+#include "ssao.h"
 #include "debug_overlay.h"
 #include "polytex.h"              /* startsx, startsy */
 #include "sound.h"                /* pal_addr */
@@ -408,6 +409,11 @@ struct SceneRendererGPU {
     float saturation;      /* colour saturation; 1.0 = neutral */
     float contrast;        /* contrast; 1.0 = neutral */
     float vigStrength;     /* vignette darkening strength; 0.0 = off */
+    bool  ssaoEnabled;     /* ambient occlusion (ssao.c); main view, non-MSAA only */
+    float ssaoRadius;      /* AO sample radius in world units */
+    float ssaoStrength;    /* AO darkening strength; 1.0 = as computed */
+    SSAOPass *ssao;        /* created on first use */
+    bool  ssaoCreateFailed; /* don't retry (and re-log) every frame */
     float brightness;      /* additive brightness offset; 0.0 = neutral */
     float fovMultiplier;   /* FOV multiplier applied on top of the game camera; 1.0 = native */
     bool  wireframe;       /* render geometry as wireframe */
@@ -870,6 +876,21 @@ void scene_render_gpu_build_vp(const SceneRendererGPU *r, float vp[16])
     int vpH = r->viewportH > 0 ? r->viewportH : 400;
     build_mvp(vp, &r->camera, &r->proj, vpW, vpH, r->fovMultiplier,
               effective_screen_scale(r, vpH));
+}
+
+/* The projection terms build_mvp uses for the current viewport, for passes
+ * that rebuild view-space positions from depth (ssao.c):
+ *   ndc.x = fovX * x / z,  ndc.y = fovY * y / z + shiftY */
+static void scene_view_projection(const SceneRendererGPU *r,
+                                  float *fovX, float *fovY, float *shiftY)
+{
+    int vpW = r->viewportW > 0 ? r->viewportW : 640;
+    int vpH = r->viewportH > 0 ? r->viewportH : 400;
+    float ss = effective_screen_scale(r, vpH);
+    *fovX = (2.0f * r->camera.fovScale * r->fovMultiplier * ss) / (float)vpW;
+    *fovY = (2.0f * r->camera.fovScale * r->fovMultiplier * ss) / (float)vpH;
+    float horizon_y = ss * (199.0f - (float)r->proj.centerY);
+    *shiftY = ((float)vpH * 0.5f - horizon_y) / ((float)vpH * 0.5f);
 }
 
 bool scene_render_gpu_project_to_ndc(const SceneRendererGPU *r,
@@ -1744,6 +1765,8 @@ SceneRendererGPU *scene_render_gpu_create(SDL_GPUDevice *device, SDL_Window *win
         : SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
     r->anisotropyLevel = 3;   /* default 16x, matches old hardcoded value */
     r->renderScale     = 1.0f;
+    r->ssaoRadius      = 400.0f;
+    r->ssaoStrength    = 1.0f;
     r->gamma           = 1.0f;
     r->fogColor[0]     = 0.70f;  /* light sky-grey fog */
     r->fogColor[1]     = 0.75f;
@@ -1995,6 +2018,7 @@ void scene_render_gpu_destroy(SceneRendererGPU *r)
     }
     if (r->depthTex)          SDL_ReleaseGPUTexture(r->device, r->depthTex);
     if (r->signDepthCopyTex)  SDL_ReleaseGPUTexture(r->device, r->signDepthCopyTex);
+    ssao_destroy(r->ssao);
     if (r->msaaTex)           SDL_ReleaseGPUTexture(r->device, r->msaaTex);
     if (r->msaaDepthTex)  SDL_ReleaseGPUTexture(r->device, r->msaaDepthTex);
     if (r->hudOverlayTex) SDL_ReleaseGPUTexture(r->device, r->hudOverlayTex);
@@ -3454,6 +3478,32 @@ static bool scene_render_gpu_end_frame_internal(SceneRendererGPU *r,
         SDL_CopyGPUTextureToTexture(dcp, &dcSrc, &dcDst, (Uint32)renderW, (Uint32)renderH, 1, false);
         SDL_EndGPUCopyPass(dcp);
 
+        /* Ambient occlusion: the depth snapshot now holds everything that
+         * writes depth (track, walls, buildings, cars), and signs and the
+         * HUD are still to come, so they draw on top un-darkened. Skipped
+         * for editor/parity readback so those outputs never change. */
+        if (r->ssaoEnabled && !bReadback) {
+            if (!r->ssao && !r->ssaoCreateFailed) {
+                r->ssao = ssao_create(r->device, r->colorTargetFormat);
+                r->ssaoCreateFailed = (r->ssao == NULL);
+            }
+            if (r->ssao) {
+                SSAOParams ssaoParams = {
+                    .zNear      = SCENE_GPU_NEAR,
+                    .zFar       = SCENE_GPU_FAR,
+                    .radius     = r->ssaoRadius,
+                    .strength   = r->ssaoStrength,
+                    .fadeStart  = 13000.0f,   /* ~10 car lengths */
+                    .fadeEnd    = 40000.0f,   /* ~30 car lengths */
+                    .fogDensity = r->fogDensity,
+                    .fogStart   = r->fogStart
+                };
+                scene_view_projection(r, &ssaoParams.fovX, &ssaoParams.fovY, &ssaoParams.shiftY);
+                ssao_apply(r->ssao, r->cmdBuf, r->signDepthCopyTex, resolveTarget,
+                           (Uint32)renderW, (Uint32)renderH, &ssaoParams);
+            }
+        }
+
         SDL_GPUColorTargetInfo colorInfoB = colorInfo;
         colorInfoB.load_op  = SDL_GPU_LOADOP_LOAD;
         colorInfoB.store_op = SDL_GPU_STOREOP_STORE;
@@ -3969,6 +4019,15 @@ void scene_render_gpu_set_vignette(SceneRendererGPU *r, float strength)
 {
     if (!r) return;
     r->vigStrength = (strength >= 0.0f) ? strength : 0.0f;
+}
+
+void scene_render_gpu_set_ambient_occlusion(SceneRendererGPU *r, bool enabled,
+                                            float radius, float strength)
+{
+    if (!r) return;
+    r->ssaoEnabled  = enabled;
+    r->ssaoRadius   = (radius > 1.0f) ? radius : 1.0f;
+    r->ssaoStrength = (strength >= 0.0f) ? strength : 0.0f;
 }
 
 void scene_render_gpu_set_brightness(SceneRendererGPU *r, float brightness)

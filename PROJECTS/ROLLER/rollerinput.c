@@ -3387,6 +3387,25 @@ static int InputParseDebugSetting(const char *szName, const char *szValue)
     return 1;
   }
 
+  if (InputStringEqualsNoCase(szName, "AmbientOcclusion")) {
+    g_bAmbientOcclusion = InputStringEqualsNoCase(szValue, "On") ||
+                          InputStringEqualsNoCase(szValue, "1")  ||
+                          InputStringEqualsNoCase(szValue, "True");
+    return 1;
+  }
+
+  if (InputStringEqualsNoCase(szName, "AORadius")) {
+    g_fAORadius = (float)atof(szValue);
+    if (g_fAORadius < 50.0f) g_fAORadius = 400.0f;
+    return 1;
+  }
+
+  if (InputStringEqualsNoCase(szName, "AOStrength")) {
+    g_fAOStrength = (float)atof(szValue);
+    if (g_fAOStrength < 0.0f) g_fAOStrength = 0.0f;
+    return 1;
+  }
+
   if (InputStringEqualsNoCase(szName, "Brightness")) {
     g_fBrightness = (float)atof(szValue);
     return 1;
@@ -3817,6 +3836,9 @@ void InputSaveConfig(void)
   fprintf(fp, "Saturation=%.2f\n", g_fSaturation);
   fprintf(fp, "Contrast=%.2f\n", g_fContrast);
   fprintf(fp, "VigStrength=%.2f\n", g_fVigStrength);
+  fprintf(fp, "AmbientOcclusion=%s\n", g_bAmbientOcclusion ? "On" : "Off");
+  fprintf(fp, "AORadius=%.0f\n", g_fAORadius);
+  fprintf(fp, "AOStrength=%.2f\n", g_fAOStrength);
   fprintf(fp, "Brightness=%.2f\n", g_fBrightness);
   fprintf(fp, "FovMultiplier=%.2f\n", g_fFovMultiplier);
   fprintf(fp, "MirrorFov=%.2f\n", g_fMirrorFov);

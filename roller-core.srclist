@@ -46,6 +46,7 @@ KEEP|PROJECTS/ROLLER/game_render_hardware.c
 KEEP|PROJECTS/ROLLER/game_render_software.c
 KEEP|PROJECTS/ROLLER/drawtrk3.c
 KEEP|PROJECTS/ROLLER/crt_filter.c
+KEEP|PROJECTS/ROLLER/ssao.c
 KEEP|PROJECTS/ROLLER/present_sdlrenderer.c
 KEEP|PROJECTS/ROLLER/loadtrak.c
 KEEP|PROJECTS/ROLLER/building.c

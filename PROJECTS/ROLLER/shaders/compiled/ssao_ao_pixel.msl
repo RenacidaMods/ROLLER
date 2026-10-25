@@ -1,0 +1,179 @@
+#pragma clang diagnostic ignored "-Wmissing-prototypes"
+#pragma clang diagnostic ignored "-Wmissing-braces"
+
+#include <metal_stdlib>
+#include <simd/simd.h>
+
+using namespace metal;
+
+template<typename T, size_t Num>
+struct spvUnsafeArray
+{
+    T elements[Num ? Num : 1];
+    
+    thread T& operator [] (size_t pos) thread
+    {
+        return elements[pos];
+    }
+    constexpr const thread T& operator [] (size_t pos) const thread
+    {
+        return elements[pos];
+    }
+    
+    device T& operator [] (size_t pos) device
+    {
+        return elements[pos];
+    }
+    constexpr const device T& operator [] (size_t pos) const device
+    {
+        return elements[pos];
+    }
+    
+    constexpr const constant T& operator [] (size_t pos) const constant
+    {
+        return elements[pos];
+    }
+    
+    threadgroup T& operator [] (size_t pos) threadgroup
+    {
+        return elements[pos];
+    }
+    constexpr const threadgroup T& operator [] (size_t pos) const threadgroup
+    {
+        return elements[pos];
+    }
+};
+
+struct type_SSAOUniforms
+{
+    float2 depthSize;
+    float2 fov;
+    float shiftY;
+    float zF;
+    float zB;
+    float radius;
+    float fadeStart;
+    float fadeEnd;
+    float zNear;
+    float _pad;
+};
+
+constant spvUnsafeArray<float3, 12> _112 = spvUnsafeArray<float3, 12>({ float3(0.5299999713897705078125, 0.14000000059604644775390625, 0.37999999523162841796875), float3(-0.2700000107288360595703125, 0.4799999892711639404296875, 0.20999999344348907470703125), float3(-0.10999999940395355224609375, -0.36000001430511474609375, 0.560000002384185791015625), float3(0.23999999463558197021484375, -0.180000007152557373046875, 0.2199999988079071044921875), float3(0.0599999986588954925537109375, 0.2700000107288360595703125, 0.119999997317790985107421875), float3(-0.4600000083446502685546875, -0.0500000007450580596923828125, 0.3499999940395355224609375), float3(0.37999999523162841796875, 0.519999980926513671875, 0.4699999988079071044921875), float3(-0.62000000476837158203125, 0.310000002384185791015625, 0.579999983310699462890625), float3(0.709999978542327880859375, -0.3300000131130218505859375, 0.2899999916553497314453125), float3(-0.20999999344348907470703125, -0.7400000095367431640625, 0.430000007152557373046875), float3(0.119999997317790985107421875, 0.810000002384185791015625, 0.4799999892711639404296875), float3(-0.85000002384185791015625, -0.37999999523162841796875, 0.2700000107288360595703125) });
+
+struct main0_out
+{
+    float4 out_var_SV_Target [[color(0)]];
+};
+
+struct main0_in
+{
+    float2 in_var_TEXCOORD0 [[user(locn0)]];
+};
+
+fragment main0_out main0(main0_in in [[stage_in]], constant type_SSAOUniforms& SSAOUniforms [[buffer(0)]], texture2d<float> depthTex [[texture(0)]], float4 gl_FragCoord [[position]])
+{
+    main0_out out = {};
+    float4 _410;
+    do
+    {
+        float2 _123 = SSAOUniforms.depthSize - float2(1.0);
+        float4 _131 = depthTex.read(uint2(int3(int2(fast::clamp(in.in_var_TEXCOORD0 * SSAOUniforms.depthSize, float2(0.0), _123)), 0).xy), 0);
+        float _132 = _131.x;
+        if (_132 >= 0.99999988079071044921875)
+        {
+            _410 = float4(1.0);
+            break;
+        }
+        float _141 = SSAOUniforms.zB / (_132 - SSAOUniforms.zF);
+        float3 _161 = float3((((in.in_var_TEXCOORD0.x * 2.0) - 1.0) * _141) / SSAOUniforms.fov.x, (((1.0 - (in.in_var_TEXCOORD0.y * 2.0)) - SSAOUniforms.shiftY) * _141) / SSAOUniforms.fov.y, _141);
+        float2 _162 = float2(1.0) / SSAOUniforms.depthSize;
+        float2 _164 = float2(_162.x, 0.0);
+        float2 _165 = in.in_var_TEXCOORD0 + _164;
+        float _177 = SSAOUniforms.zB / (depthTex.read(uint2(int3(int2(fast::clamp(_165 * SSAOUniforms.depthSize, float2(0.0), _123)), 0).xy), 0).x - SSAOUniforms.zF);
+        float2 _190 = in.in_var_TEXCOORD0 - _164;
+        float _202 = SSAOUniforms.zB / (depthTex.read(uint2(int3(int2(fast::clamp(_190 * SSAOUniforms.depthSize, float2(0.0), _123)), 0).xy), 0).x - SSAOUniforms.zF);
+        float2 _216 = float2(0.0, _162.y);
+        float2 _217 = in.in_var_TEXCOORD0 + _216;
+        float _229 = SSAOUniforms.zB / (depthTex.read(uint2(int3(int2(fast::clamp(_217 * SSAOUniforms.depthSize, float2(0.0), _123)), 0).xy), 0).x - SSAOUniforms.zF);
+        float2 _242 = in.in_var_TEXCOORD0 - _216;
+        float _254 = SSAOUniforms.zB / (depthTex.read(uint2(int3(int2(fast::clamp(_242 * SSAOUniforms.depthSize, float2(0.0), _123)), 0).xy), 0).x - SSAOUniforms.zF);
+        float3 _277;
+        if (abs(_177 - _141) < abs(_141 - _202))
+        {
+            _277 = float3((((_165.x * 2.0) - 1.0) * _177) / SSAOUniforms.fov.x, (((1.0 - (_165.y * 2.0)) - SSAOUniforms.shiftY) * _177) / SSAOUniforms.fov.y, _177) - _161;
+        }
+        else
+        {
+            _277 = _161 - float3((((_190.x * 2.0) - 1.0) * _202) / SSAOUniforms.fov.x, (((1.0 - (_190.y * 2.0)) - SSAOUniforms.shiftY) * _202) / SSAOUniforms.fov.y, _202);
+        }
+        float3 _288;
+        if (abs(_229 - _141) < abs(_141 - _254))
+        {
+            _288 = float3((((_217.x * 2.0) - 1.0) * _229) / SSAOUniforms.fov.x, (((1.0 - (_217.y * 2.0)) - SSAOUniforms.shiftY) * _229) / SSAOUniforms.fov.y, _229) - _161;
+        }
+        else
+        {
+            _288 = _161 - float3((((_242.x * 2.0) - 1.0) * _254) / SSAOUniforms.fov.x, (((1.0 - (_242.y * 2.0)) - SSAOUniforms.shiftY) * _254) / SSAOUniforms.fov.y, _254);
+        }
+        float3 _290 = fast::normalize(cross(_277, _288));
+        float3 _297;
+        if (dot(_290, -_161) < 0.0)
+        {
+            _297 = -_290;
+        }
+        else
+        {
+            _297 = _290;
+        }
+        float _303 = 6.283185482025146484375 * fract(52.98291778564453125 * fract(dot(gl_FragCoord.xy, float2(0.067110560834407806396484375, 0.005837149918079376220703125))));
+        float3 _306 = float3(cos(_303), sin(_303), 0.0);
+        float3 _309 = _306 - (_297 * dot(_306, _297));
+        float3 _319;
+        if (dot(_309, _309) < 9.9999997473787516355514526367188e-05)
+        {
+            _319 = fast::normalize(cross(_297, float3(0.0, 0.0, 1.0)) + float3(0.001000000047497451305389404296875));
+        }
+        else
+        {
+            _319 = fast::normalize(_309);
+        }
+        float3 _320 = cross(_297, _319);
+        float _325 = precise::max(SSAOUniforms.radius * 0.02999999932944774627685546875, _141 * 0.00150000001303851604461669921875);
+        float _327;
+        _327 = 0.0;
+        float _328;
+        for (int _330 = 0; _330 < 12; _327 = _328, _330++)
+        {
+            float3 _346 = _161 + ((((_319 * _112[_330].x) + (_320 * _112[_330].y)) + (_297 * _112[_330].z)) * SSAOUniforms.radius);
+            float _347 = _346.z;
+            if (_347 <= SSAOUniforms.zNear)
+            {
+                _328 = _327;
+                continue;
+            }
+            float2 _364 = float2((((SSAOUniforms.fov.x * _346.x) / _347) * 0.5) + 0.5, 0.5 - ((((SSAOUniforms.fov.y * _346.y) / _347) + SSAOUniforms.shiftY) * 0.5));
+            bool _372;
+            if (!any(_364 < float2(0.0)))
+            {
+                _372 = any(_364 > float2(1.0));
+            }
+            else
+            {
+                _372 = true;
+            }
+            if (_372)
+            {
+                _328 = _327;
+                continue;
+            }
+            float _386 = SSAOUniforms.zB / (depthTex.read(uint2(int3(int2(fast::clamp(_364 * SSAOUniforms.depthSize, float2(0.0), _123)), 0).xy), 0).x - SSAOUniforms.zF);
+            _328 = _327 + (float(_386 <= (_347 - _325)) * smoothstep(0.0, 1.0, SSAOUniforms.radius / precise::max(abs(_141 - _386), 0.001000000047497451305389404296875)));
+        }
+        float _408 = mix(1.0 - (_327 * 0.083333335816860198974609375), 1.0, fast::clamp((_141 - SSAOUniforms.fadeStart) / precise::max(SSAOUniforms.fadeEnd - SSAOUniforms.fadeStart, 1.0), 0.0, 1.0));
+        _410 = float4(_408, _408, _408, 1.0);
+        break;
+    } while(false);
+    out.out_var_SV_Target = _410;
+    return out;
+}
+

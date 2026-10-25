@@ -1228,6 +1228,11 @@ void game_render_set_vignette(GameRenderer *renderer, float strength) {
     if (renderer) scene_render_gpu_set_vignette(renderer->gpu, strength);
 }
 
+void game_render_set_ambient_occlusion(GameRenderer *renderer, bool enabled,
+                                       float radius, float strength) {
+    if (renderer) scene_render_gpu_set_ambient_occlusion(renderer->gpu, enabled, radius, strength);
+}
+
 void game_render_set_fov_multiplier(GameRenderer *renderer, float mult) {
     if (renderer) scene_render_gpu_set_fov_multiplier(renderer->gpu, mult);
 }
@@ -1297,6 +1302,10 @@ void game_render_set_contrast(GameRenderer *renderer, float contrast) {
 }
 void game_render_set_vignette(GameRenderer *renderer, float strength) {
     (void)renderer; (void)strength;
+}
+void game_render_set_ambient_occlusion(GameRenderer *renderer, bool enabled,
+                                       float radius, float strength) {
+    (void)renderer; (void)enabled; (void)radius; (void)strength;
 }
 void game_render_set_fov_multiplier(GameRenderer *renderer, float mult) {
     (void)renderer; (void)mult;

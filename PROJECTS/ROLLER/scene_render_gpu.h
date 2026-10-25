@@ -137,6 +137,11 @@ void scene_render_gpu_set_contrast(SceneRendererGPU *r, float contrast);
 
 /* strength: 0.0 = off, higher = darker edges */
 void scene_render_gpu_set_vignette(SceneRendererGPU *r, float strength);
+/* Ambient occlusion (ssao.c): soft darkening where surfaces meet. Main view
+ * only, and only without MSAA (MSAA depth can't be sampled). radius is in
+ * world units (a car is ~1300 long); strength 1.0 = as computed. */
+void scene_render_gpu_set_ambient_occlusion(SceneRendererGPU *r, bool enabled,
+                                            float radius, float strength);
 
 /* brightness: additive offset; 0.0 = neutral, positive = brighter, negative = darker */
 void scene_render_gpu_set_brightness(SceneRendererGPU *r, float brightness);

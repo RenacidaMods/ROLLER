@@ -40,6 +40,9 @@ extern uint32_t g_uFogColor;     /* fog RGB as 0xRRGGBB; default 0xB3BFCC */
 extern float g_fSaturation;      /* colour saturation; 1.0 = neutral */
 extern float g_fContrast;        /* contrast; 1.0 = neutral */
 extern float g_fVigStrength;     /* vignette strength; 0.0 = off */
+extern bool  g_bAmbientOcclusion; /* GPU ambient occlusion (ssao.c); off by default, needs MSAA off */
+extern float g_fAORadius;        /* AO radius in world units (a car is ~1300 long) */
+extern float g_fAOStrength;      /* AO strength; 1.0 = as computed */
 extern float g_fBrightness;      /* additive brightness; 0.0 = neutral */
 extern float g_fFovMultiplier;   /* FOV multiplier; 1.0 = native */
 extern float g_fMirrorFov;       /* rearview/side mirror FOV multiplier; 0.75 = default (matches SW), <1 = zoom in, >1 = zoom out */
