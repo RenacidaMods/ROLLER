@@ -24,13 +24,29 @@ On cutting, alpha is snapped back to fully on or off at 50%, matching how the
 game treats transparency. If the upscaled sheet has no alpha channel, the
 original tile's alpha is scaled up instead.
 
-Needs Pillow only.
+With Upscayl installed (https://upscayl.org), two more commands drive its
+command-line engine (upscayl-bin) directly, so no manual upscaling is needed:
+
+    python tools/hd_texture_sheet.py upscale D:/GAMES/ROLLER/hd_textures_dump/tracksix --model high-fidelity
+        -> stitch, upscale, cut: D:/GAMES/ROLLER/hd_textures/tracksix/000.png ...
+
+    python tools/hd_texture_sheet.py lineup D:/GAMES/ROLLER/hd_textures_dump/tracksix:10,100,136
+        -> D:/GAMES/ROLLER/hd_textures_work/lineup_tracksix.png: the chosen
+           tiles from every model side by side, each repeated 2x2 the way it
+           tiles in game, so invented patterns are easy to spot
+
+Upscaled sheets are cached in hd_textures_work as <bank>_<model>.png and
+reused while they're newer than the stitched sheet.
+
+Needs Pillow only (plus Upscayl for upscale/lineup).
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -82,11 +98,12 @@ def bleed_transparent(tile: Image.Image, passes: int = 4) -> Image.Image:
                            bytes(v for c, p in zip(colours, px) for v in (c[0], c[1], c[2], p[3])))
 
 
-def stitch(bank_dir: Path, out_dir: Path | None, cols: int, gap: int) -> int:
+def stitch(bank_dir: Path, out_dir: Path | None, cols: int, gap: int) -> Path | None:
+    """Writes <bank>.png and <bank>.json; returns the .json path, or None on error."""
     tiles = tile_files(bank_dir)
     if not tiles:
         print(f"No numbered PNG tiles found in {bank_dir}", file=sys.stderr)
-        return 1
+        return None
     count = max(tiles) + 1
     missing = [i for i in range(count) if i not in tiles]
     rows = (count + cols - 1) // cols
@@ -99,7 +116,7 @@ def stitch(bank_dir: Path, out_dir: Path | None, cols: int, gap: int) -> int:
         tile = Image.open(tiles[index])
         if tile.size != (TILE, TILE):
             print(f"{tiles[index]} is {tile.size[0]}x{tile.size[1]}, expected {TILE}x{TILE}", file=sys.stderr)
-            return 1
+            return None
         sheet.paste(bleed_transparent(tile), ((index % cols) * TILE, (index // cols) * row_pitch))
 
     # Fill each gap by repeating the edge rows of the tiles above and below it.
@@ -117,6 +134,15 @@ def stitch(bank_dir: Path, out_dir: Path | None, cols: int, gap: int) -> int:
     bank = bank_dir.resolve().name
     sheet_path = out_dir / f"{bank}.png"
     layout_path = out_dir / f"{bank}.json"
+    # Leave an identical sheet untouched so cached upscales of it stay valid.
+    unchanged = False
+    if sheet_path.is_file():
+        with Image.open(sheet_path) as existing:
+            unchanged = existing.mode == sheet.mode and existing.size == sheet.size \
+                and existing.tobytes() == sheet.tobytes()
+    if unchanged:
+        print(f"{sheet_path.name} is unchanged")
+        return layout_path
     sheet.save(sheet_path)
     layout_path.write_text(json.dumps({
         "version": LAYOUT_VERSION,
@@ -135,7 +161,7 @@ def stitch(bank_dir: Path, out_dir: Path | None, cols: int, gap: int) -> int:
     print(f"Wrote {layout_path}")
     if missing:
         print(f"Note: tiles {missing} were missing and left blank")
-    return 0
+    return layout_path
 
 
 def parse_tiles(spec: str | None, count: int) -> list[int]:
@@ -207,6 +233,191 @@ def cut(layout_path: Path, upscaled_path: Path, out_root: Path | None,
     return 0
 
 
+# --------------------------------------------------------------------------
+# Upscayl automation
+# --------------------------------------------------------------------------
+
+def find_upscayl(explicit: Path | None) -> tuple[Path, Path] | None:
+    """Returns (engine executable, models folder) of an Upscayl install."""
+    roots = [explicit] if explicit else [
+        Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "Upscayl",
+        Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "Upscayl",
+    ]
+    for root in roots:
+        for name in ("upscayl-bin.exe", "upscayl-bin"):
+            engine = root / "resources" / "bin" / name
+            if engine.is_file():
+                return engine, root / "resources" / "models"
+    print("Can't find Upscayl's engine (resources/bin/upscayl-bin); install Upscayl "
+          "or pass --upscayl <install folder>", file=sys.stderr)
+    return None
+
+
+def available_models(models_dir: Path) -> list[str]:
+    return sorted(p.stem for p in models_dir.glob("*.param"))
+
+
+def resolve_model(name: str, models: list[str]) -> str | None:
+    """Accepts a full model name or a short one ("high-fidelity" -> "high-fidelity-4x")."""
+    for candidate in (name, f"{name}-4x"):
+        if candidate in models:
+            return candidate
+    print(f"Unknown model {name!r}; available: {', '.join(models)}", file=sys.stderr)
+    return None
+
+
+# Mean per-channel difference (0-255) between an upscaled sheet shrunk back to
+# the original size and the original. Working models measured 3-8 on track and
+# sign sheets; a model that produced noise on this GPU (upscayl-lite) measured
+# 67-104. Anything above this is treated as broken output.
+BROKEN_DRIFT = 25.0
+
+
+def drift_from_original(sheet: Path, upscaled: Path) -> float:
+    from PIL import ImageChops, ImageStat
+
+    with Image.open(sheet) as original, Image.open(upscaled) as big:
+        small = big.convert("RGB").resize(original.size, Image.BOX)
+        means = ImageStat.Stat(ImageChops.difference(small, original.convert("RGB"))).mean
+    return sum(means) / len(means)
+
+
+def upscaled_sheet(layout_path: Path, engine: Path, models_dir: Path, model: str) -> Path | None:
+    """Upscales a stitched sheet 4x with one model, reusing a newer cached result.
+    Returns None if Upscayl fails or its output looks broken."""
+    sheet = layout_path.with_suffix(".png")
+    out = layout_path.with_name(f"{layout_path.stem}_{model}.png")
+    if out.is_file() and out.stat().st_mtime >= sheet.stat().st_mtime:
+        print(f"Using cached {out.name}")
+    else:
+        print(f"Upscaling {sheet.name} with {model}...")
+        result = subprocess.run(
+            [str(engine), "-i", str(sheet), "-o", str(out), "-m", str(models_dir),
+             "-n", model, "-s", "4", "-f", "png"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace")
+        if result.returncode != 0 or not out.is_file():
+            print(f"Upscayl failed on {sheet.name} with {model}:\n{result.stdout}{result.stderr}",
+                  file=sys.stderr)
+            return None
+    drift = drift_from_original(sheet, out)
+    if drift > BROKEN_DRIFT:
+        print(f"{model} output for {sheet.name} looks broken (drift {drift:.0f}, "
+              f"working models stay under {BROKEN_DRIFT:.0f}); skipping it", file=sys.stderr)
+        return None
+    return out
+
+
+def upscale(bank_dir: Path, model_name: str, upscayl_root: Path | None,
+            out_root: Path | None, cols: int, gap: int) -> int:
+    found = find_upscayl(upscayl_root)
+    if not found:
+        return 1
+    engine, models_dir = found
+    model = resolve_model(model_name, available_models(models_dir))
+    if not model:
+        return 1
+    layout_path = stitch(bank_dir, None, cols, gap)
+    if not layout_path:
+        return 1
+    sheet = upscaled_sheet(layout_path, engine, models_dir, model)
+    if not sheet:
+        return 1
+    return cut(layout_path, sheet, out_root, None, "auto")
+
+
+def tile_from_sheet(sheet: Image.Image, layout: dict, index: int, scale: int) -> Image.Image:
+    tile_px = layout["tile_size"] * scale
+    x = (index % layout["cols"]) * tile_px
+    y = (index // layout["cols"]) * (layout["tile_size"] + layout["gap"]) * scale
+    tile = sheet.crop((x, y, x + tile_px, y + tile_px)).convert("RGBA")
+    tile.putalpha(tile.getchannel("A").point(lambda v: 255 if v >= 128 else 0))
+    return tile
+
+
+def lineup(items: list[str], upscayl_root: Path | None, model_names: list[str] | None,
+           cell: int, cols: int, gap: int) -> int:
+    from PIL import ImageDraw
+
+    found = find_upscayl(upscayl_root)
+    if not found:
+        return 1
+    engine, models_dir = found
+    models = available_models(models_dir)
+    if model_names:
+        models = [m for m in (resolve_model(n, models) for n in model_names) if m]
+        if not models:
+            return 1
+
+    # Each item is "<bank folder>:<tiles>"; split on the last colon so drive
+    # letters like D: survive.
+    rows = []
+    for item in items:
+        folder, _, spec = item.rpartition(":")
+        if not folder or not spec or not spec[0].isdigit():
+            print(f"{item!r} should look like <bank folder>:<tiles>, e.g. hd_textures_dump/tracksix:10,136",
+                  file=sys.stderr)
+            return 1
+        bank_dir = Path(folder)
+        layout_path = stitch(bank_dir, None, cols, gap)
+        if not layout_path:
+            return 1
+        layout = json.loads(layout_path.read_text())
+        sheets = {}
+        for model in models:
+            path = upscaled_sheet(layout_path, engine, models_dir, model)
+            if path:
+                sheets[model] = Image.open(path)
+        # Only compare models that worked for every bank in this lineup.
+        models = [m for m in models if m in sheets]
+        if not models:
+            print("No model produced usable output", file=sys.stderr)
+            return 1
+        for index in parse_tiles(spec, layout["tiles"]):
+            original = Image.open(bank_dir / f"{index:03d}.png").convert("RGBA")
+            rows.append((f"{layout['bank']} {index:03d}", original, sheets, layout, index))
+
+    # Grid: one row per tile, columns = original + each model. Each cell shows
+    # the tile repeated 2x2 at cell/2 per copy, over a checkerboard so
+    # transparency shows.
+    label_w, head_h, pad = 110, 22, 6
+    columns = ["original"] + models
+    grid = Image.new("RGB", (label_w + len(columns) * (cell + pad), head_h + len(rows) * (cell + pad)),
+                     (255, 255, 255))
+    draw = ImageDraw.Draw(grid)
+    for c, name in enumerate(columns):
+        draw.text((label_w + c * (cell + pad) + 2, 5), name.removesuffix("-4x"), fill=(0, 0, 0))
+
+    checker = Image.new("RGBA", (cell, cell), (200, 200, 200, 255))
+    cdraw = ImageDraw.Draw(checker)
+    for y in range(0, cell, 16):
+        for x in range(0, cell, 16):
+            if (x // 16 + y // 16) % 2:
+                cdraw.rectangle([x, y, x + 15, y + 15], fill=(150, 150, 150, 255))
+
+    half = cell // 2
+    for r, (label, original, sheets, layout, index) in enumerate(rows):
+        y0 = head_h + r * (cell + pad)
+        draw.text((4, y0 + cell // 2 - 6), label, fill=(0, 0, 0))
+        tiles = [original.resize((half, half), Image.NEAREST)]
+        for model in models:
+            sheet = sheets[model]
+            scale = round(sheet.width / layout["width"])
+            tiles.append(tile_from_sheet(sheet, layout, index, scale).resize((half, half), Image.LANCZOS))
+        for c, tile in enumerate(tiles):
+            block = checker.copy()
+            for dy in (0, half):
+                for dx in (0, half):
+                    block.alpha_composite(tile, (dx, dy))
+            grid.paste(block.convert("RGB"), (label_w + c * (cell + pad), y0))
+
+    work_dir = Path(items[0].rpartition(":")[0]).resolve().parent.parent / "hd_textures_work"
+    banks = "_".join(dict.fromkeys(row[0].split()[0] for row in rows))
+    out = work_dir / f"lineup_{banks}.png"
+    grid.save(out)
+    print(f"Wrote {out} ({len(rows)} tiles x {len(columns)} columns)")
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     sub = parser.add_subparsers(dest="command", required=True)
@@ -227,11 +438,34 @@ def main() -> int:
     p_cut.add_argument("--alpha", choices=("auto", "upscaled", "original"), default="auto",
                        help="where transparency comes from (default: upscaled if it has alpha)")
 
+    p_up = sub.add_parser("upscale", help="stitch, upscale with Upscayl and cut, in one go")
+    p_up.add_argument("bank_dir", type=Path, help="e.g. hd_textures_dump/tracksix")
+    p_up.add_argument("--model", default="high-fidelity",
+                      help="Upscayl model, e.g. high-fidelity, digital-art, upscayl-standard (default high-fidelity)")
+    p_up.add_argument("--upscayl", type=Path, default=None, help="Upscayl install folder (default: found automatically)")
+    p_up.add_argument("--out", type=Path, default=None,
+                      help="output root (default: hd_textures next to hd_textures_dump)")
+    p_up.add_argument("--cols", type=int, default=16, help="tiles per row (default 16)")
+    p_up.add_argument("--gap", type=int, default=8, help="padding pixels between rows (default 8)")
+
+    p_line = sub.add_parser("lineup", help="compare chosen tiles across every Upscayl model in one image")
+    p_line.add_argument("items", nargs="+", help="<bank folder>:<tiles>, e.g. hd_textures_dump/tracksix:10,100,136")
+    p_line.add_argument("--models", default=None, help="comma-separated models (default: all installed)")
+    p_line.add_argument("--upscayl", type=Path, default=None, help="Upscayl install folder (default: found automatically)")
+    p_line.add_argument("--cell", type=int, default=256, help="pixel size of each 2x2 cell (default 256)")
+    p_line.add_argument("--cols", type=int, default=16, help="tiles per row when stitching (default 16)")
+    p_line.add_argument("--gap", type=int, default=8, help="padding pixels between rows when stitching (default 8)")
+
     args = parser.parse_args()
+    if args.command in ("stitch", "upscale", "lineup") and (args.cols < 1 or args.gap < 0):
+        parser.error("--cols must be at least 1 and --gap can't be negative")
     if args.command == "stitch":
-        if args.cols < 1 or args.gap < 0:
-            parser.error("--cols must be at least 1 and --gap can't be negative")
-        return stitch(args.bank_dir, args.out, args.cols, args.gap)
+        return 0 if stitch(args.bank_dir, args.out, args.cols, args.gap) else 1
+    if args.command == "upscale":
+        return upscale(args.bank_dir, args.model, args.upscayl, args.out, args.cols, args.gap)
+    if args.command == "lineup":
+        models = args.models.split(",") if args.models else None
+        return lineup(args.items, args.upscayl, models, args.cell, args.cols, args.gap)
     return cut(args.layout, args.upscaled, args.out, args.tiles, args.alpha)
 
 
