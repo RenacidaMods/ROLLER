@@ -261,6 +261,9 @@ void game_render_end_frame(GameRenderer *renderer) {
         if (fade_palette_active())
             fade_palette_update();
         game_render_hw_draw_fps_overlay();
+        /* In-race menus (pause, options, replay panel) are drawn on the HUD;
+         * HUD scale would split them into pieces. */
+        scene_render_gpu_set_hud_menu_open(renderer->gpu, game_req != 0);
         scene_render_gpu_set_hud_buffer(renderer->gpu,
                                         scrbuf,
                                         iHudW,

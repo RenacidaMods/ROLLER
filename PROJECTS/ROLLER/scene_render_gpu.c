@@ -294,6 +294,7 @@ struct SceneRendererGPU {
     /* HUD scale < 1: each HUD piece is drawn shrunk towards its own corner,
      * edge or the centre (see build_hud_piece_vertices). */
     float                    hudScale;
+    bool                     hudMenuOpen;   /* in-race menu on the HUD: draw it unscaled */
     SDL_GPUBuffer           *hudPieceVertBuf;
     SDL_GPUTransferBuffer   *hudPieceXfer;
     int                      hudPieceVertCount;
@@ -2972,6 +2973,11 @@ void scene_render_gpu_begin_frame(SceneRendererGPU *r)
 #define HUD_PIECE_MAX      64    /* more pieces than this: draw unscaled */
 #define HUD_PIECE_GRID_MAX 512   /* max cells per axis (2048 HUD pixels) */
 #define HUD_PIECE_EDGE     0.2f  /* "near an edge": within 20% of the HUD size */
+/* A cell keeps counting as HUD for this long after it was last drawn, so
+ * pieces are grouped from recent history rather than one frame: otherwise
+ * a moving map dot briefly touching the lives icons regroups them for a
+ * frame and they jump to another anchor. */
+#define HUD_PIECE_HOLD_MS  2000
 
 /* Fills verts (6 per piece) for the HUD pieces found in pix (w x h,
  * index 0 = empty), scaled by `scale` towards their anchors, in the same
@@ -2995,6 +3001,21 @@ static int build_hud_piece_vertices(const uint8 *pix, int w, int h, float scale,
         uint8 *occRow = s_occupied + (size_t)(y / HUD_PIECE_CELL) * cw;
         for (int x = 0; x < w; x++)
             if (row[x]) occRow[x / HUD_PIECE_CELL] = 1;
+    }
+
+    static Uint32 s_lastSeen[HUD_PIECE_GRID_MAX * HUD_PIECE_GRID_MAX];
+    static int s_lastW, s_lastH;
+    if (w != s_lastW || h != s_lastH) {
+        memset(s_lastSeen, 0, sizeof(s_lastSeen));
+        s_lastW = w;
+        s_lastH = h;
+    }
+    Uint32 now = (Uint32)SDL_GetTicks();
+    for (int c = 0; c < cw * ch; c++) {
+        if (s_occupied[c])
+            s_lastSeen[c] = now ? now : 1;
+        else if (s_lastSeen[c] && now - s_lastSeen[c] < HUD_PIECE_HOLD_MS)
+            s_occupied[c] = 1;
     }
 
     int pieces = 0, vertCount = 0;
@@ -3260,7 +3281,7 @@ static bool scene_render_gpu_end_frame_internal(SceneRendererGPU *r,
 
                 /* HUD scale: this frame's piece quads, uploaded in the same pass. */
                 r->hudPieceVertCount = 0;
-                if (r->hudScale < 0.999f) {
+                if (r->hudScale < 0.999f && !r->hudMenuOpen) {
                     static SceneGPUHUDVertex s_pieceVerts[HUD_PIECE_MAX * 6];
                     int n = build_hud_piece_vertices(r->hudSrcBuf, hw, hh, r->hudScale, s_pieceVerts);
                     if (n > 0 && !r->hudPieceVertBuf) {
@@ -4208,6 +4229,12 @@ void scene_render_gpu_set_hud_scale(SceneRendererGPU *r, float scale)
 {
     if (!r) return;
     r->hudScale = (scale < 0.25f) ? 0.25f : (scale > 1.0f) ? 1.0f : scale;
+}
+
+void scene_render_gpu_set_hud_menu_open(SceneRendererGPU *r, bool open)
+{
+    if (!r) return;
+    r->hudMenuOpen = open;
 }
 
 void scene_render_gpu_set_brightness(SceneRendererGPU *r, float brightness)
