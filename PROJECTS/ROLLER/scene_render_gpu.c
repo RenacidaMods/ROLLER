@@ -139,6 +139,13 @@ static void save_picked_texture_png(const SceneGPUTextureSlot *slot, int surfIdx
 static void set_texture_dump_name(SceneGPUTextureSlot *slot, int tex_idx);
 static void dump_texture_slot_pngs(const SceneGPUTextureSlot *slot);
 
+/* Match-screen render scale helpers, defined next to
+ * scene_render_gpu_set_render_scale. */
+static bool  render_scale_matches_screen(const SceneRendererGPU *r);
+static void  view_rect_on_window(const SceneRendererGPU *r, int baseW, int baseH,
+                                 int winW, int winH, int *outW, int *outH);
+static float match_screen_scale(const SceneRendererGPU *r);
+
 /* --------------------------------------------------------------------------
  * Deferred draw commands
  * -------------------------------------------------------------------------- */
@@ -391,7 +398,8 @@ struct SceneRendererGPU {
     bool  disableMipmaps;  /* true = clamp sampler to mip 0 only (debug: isolates Adreno layout bug) */
     int   anisotropyLevel; /* 0=2x, 1=4x, 2=8x, 3=16x */
     float lodBias;         /* mip LOD bias applied to all texture samples */
-    float renderScale;     /* internal render resolution multiplier; 1.0 = native */
+    float renderScale;     /* internal render resolution multiplier; 1.0 = native;
+                            * ROLLER_RENDER_SCALE_MATCH_SCREEN = window pixel size */
 
     float fogDensity;      /* exponential-squared fog density; 0.0 = off */
     float gamma;           /* output gamma; 1.0 = neutral */
@@ -2500,7 +2508,8 @@ SDL_GPUTexture *scene_render_gpu_flush_secondary_view(SceneRendererGPU *r, int s
 
     /* Scale only the raster target. The logical viewport set by the caller
      * remains unchanged so projection/FOV stays identical at every scale. */
-    float fScale = r->renderScale > 0.25f ? r->renderScale : 1.0f;
+    float fScale = render_scale_matches_screen(r) ? match_screen_scale(r)
+                 : (r->renderScale > 0.25f ? r->renderScale : 1.0f);
     float fTargetW = (float)texW * fScale + 0.5f;
     float fTargetH = (float)texH * fScale + 0.5f;
     int iTargetW = fTargetW < (float)SCENE_GPU_MAX_SECONDARY_TARGET_DIMENSION
@@ -2978,9 +2987,17 @@ static bool scene_render_gpu_end_frame_internal(SceneRendererGPU *r,
     } else {
         nativeW = r->viewportW > 0 ? r->viewportW : 640;
         nativeH = r->viewportH > 0 ? r->viewportH : 400;
-        rs = r->renderScale > 0.25f ? r->renderScale : 1.0f;
-        renderW = (int)(nativeW * rs + 0.5f);
-        renderH = (int)(nativeH * rs + 0.5f);
+        int winW = 0, winH = 0;
+        if (render_scale_matches_screen(r) && r->window
+                && SDL_GetWindowSizeInPixels(r->window, &winW, &winH) && winW > 0 && winH > 0) {
+            /* Exactly the view's size on the window, so the final blit is 1:1. */
+            view_rect_on_window(r, nativeW, nativeH, winW, winH, &renderW, &renderH);
+            rs = (float)renderH / (float)nativeH;
+        } else {
+            rs = r->renderScale > 0.25f ? r->renderScale : 1.0f;
+            renderW = (int)(nativeW * rs + 0.5f);
+            renderH = (int)(nativeH * rs + 0.5f);
+        }
         if (renderW < 1) renderW = 1;
         if (renderH < 1) renderH = 1;
     }
@@ -3574,13 +3591,8 @@ static bool scene_render_gpu_end_frame_internal(SceneRendererGPU *r,
         int winW, winH;
         SDL_GetWindowSizeInPixels(r->window, &winW, &winH);
 
-        float scaleX = (float)winW / (float)nativeW;
-        float scaleY = (float)winH / (float)nativeH;
-        float scale  = scaleX < scaleY ? scaleX : scaleY;
-        int dstW = (int)((float)nativeW * scale);
-        int dstH = (int)((float)nativeH * scale);
-        if (dstW < 1) dstW = 1;
-        if (dstH < 1) dstH = 1;
+        int dstW, dstH;
+        view_rect_on_window(r, nativeW, nativeH, winW, winH, &dstW, &dstH);
         int dstX = (winW - dstW) / 2;
         int dstY = (winH - dstH) / 2;
 
@@ -3871,7 +3883,48 @@ void scene_render_gpu_set_lod_bias(SceneRendererGPU *r, float bias)
 void scene_render_gpu_set_render_scale(SceneRendererGPU *r, float scale)
 {
     if (!r) return;
-    r->renderScale = (scale > 0.25f) ? scale : 1.0f;
+    if (scale == ROLLER_RENDER_SCALE_MATCH_SCREEN)
+        r->renderScale = ROLLER_RENDER_SCALE_MATCH_SCREEN;
+    else
+        r->renderScale = (scale > 0.25f) ? scale : 1.0f;
+}
+
+static bool render_scale_matches_screen(const SceneRendererGPU *r)
+{
+    return r->renderScale == ROLLER_RENDER_SCALE_MATCH_SCREEN;
+}
+
+/* Size of a baseW x baseH view on a winW x winH window: the largest fit that
+ * keeps the base aspect (letterbox/pillarbox). In match-screen mode an edge
+ * within 2 pixels of the window is snapped to it, so a native-aspect view
+ * whose base width was rounded to whole pixels (e.g. 711 for 400*16/9) still
+ * fills the screen exactly instead of leaving a 1-pixel strip. */
+static void view_rect_on_window(const SceneRendererGPU *r, int baseW, int baseH,
+                                int winW, int winH, int *outW, int *outH)
+{
+    float scaleX = (float)winW / (float)baseW;
+    float scaleY = (float)winH / (float)baseH;
+    float scale  = scaleX < scaleY ? scaleX : scaleY;
+    int w = (int)((float)baseW * scale);
+    int h = (int)((float)baseH * scale);
+    if (render_scale_matches_screen(r)) {
+        if (winW - w <= 2) w = winW;
+        if (winH - h <= 2) h = winH;
+    }
+    *outW = w < 1 ? 1 : w;
+    *outH = h < 1 ? 1 : h;
+}
+
+/* Match-screen scale for views without their own window rect (mirror and
+ * 2-player secondary targets): the main view's scale, from the 640x400 base. */
+static float match_screen_scale(const SceneRendererGPU *r)
+{
+    int winW = 0, winH = 0;
+    if (!r->window || !SDL_GetWindowSizeInPixels(r->window, &winW, &winH) || winW <= 0 || winH <= 0)
+        return 1.0f;
+    float scaleX = (float)winW / 640.0f;
+    float scaleY = (float)winH / 400.0f;
+    return scaleX < scaleY ? scaleX : scaleY;
 }
 
 void scene_render_gpu_set_fog_density(SceneRendererGPU *r, float density)

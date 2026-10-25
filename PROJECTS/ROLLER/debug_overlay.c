@@ -1192,20 +1192,26 @@ static void DrawDebugPanel(DebugOverlay *pOverlay) {
        * was a separate "Cinema Native" checkbox gated behind the cheat; now
        * it's always available here). */
       /* 4x/5x: the base scene is 400 pixels tall, so 5x (2000) is close to a
-       * 4K screen's 2160 and 4x (1600) to a 1440p screen's. */
+       * 4K screen's 2160 and 4x (1600) to a 1440p screen's. "Screen" renders
+       * at exactly the window's pixel size (ROLLER_RENDER_SCALE_MATCH_SCREEN),
+       * so the final blit to the window is 1:1. */
       static const char *apszScale[] = {
-          "1x (4:3)", "1.5x (4:3)", "2x (4:3)", "3x (4:3)", "4x (4:3)", "5x (4:3)",
-          "1x (native)", "1.5x (native)", "2x (native)", "3x (native)", "4x (native)", "5x (native)"
+          "1x (4:3)", "1.5x (4:3)", "2x (4:3)", "3x (4:3)", "4x (4:3)", "5x (4:3)", "Screen (4:3)",
+          "1x (native)", "1.5x (native)", "2x (native)", "3x (native)", "4x (native)", "5x (native)", "Screen (native)"
       };
-      static const float k_scaleVals[]   = { 1.0f, 1.5f, 2.0f, 3.0f, 4.0f, 5.0f,
-                                             1.0f, 1.5f, 2.0f, 3.0f, 4.0f, 5.0f };
-      static const bool  k_scaleNative[] = { false, false, false, false, false, false,
-                                             true, true, true, true, true, true };
-      enum { SCALES_PER_ASPECT = 6 };
+      static const float k_scaleVals[]   = { 1.0f, 1.5f, 2.0f, 3.0f, 4.0f, 5.0f, ROLLER_RENDER_SCALE_MATCH_SCREEN,
+                                             1.0f, 1.5f, 2.0f, 3.0f, 4.0f, 5.0f, ROLLER_RENDER_SCALE_MATCH_SCREEN };
+      static const bool  k_scaleNative[] = { false, false, false, false, false, false, false,
+                                             true, true, true, true, true, true, true };
+      enum { SCALES_PER_ASPECT = 7 };
       int iBase = g_bRenderNative ? SCALES_PER_ASPECT : 0;
       int iCurScale = iBase;
-      for (int i = 1; i < SCALES_PER_ASPECT; i++)
-        if (g_fRenderScale >= k_scaleVals[i] - 0.01f) iCurScale = iBase + i;
+      if (g_fRenderScale == ROLLER_RENDER_SCALE_MATCH_SCREEN) {
+        iCurScale = iBase + SCALES_PER_ASPECT - 1;
+      } else {
+        for (int i = 1; i < SCALES_PER_ASPECT - 1; i++)
+          if (g_fRenderScale >= k_scaleVals[i] - 0.01f) iCurScale = iBase + i;
+      }
       nk_layout_row_dynamic(pCtx, DEBUG_ROW_H, 2);
       nk_label(pCtx, "Render scale", NK_TEXT_LEFT);
       int iNewScale = nk_combo(pCtx, apszScale, NK_LEN(apszScale), iCurScale, COMBO_ITEM_H, nk_vec2(COMBO_W, 9999));

@@ -3261,6 +3261,10 @@ static int InputParseDebugSetting(const char *szName, const char *szValue)
   }
 
   if (InputStringEqualsNoCase(szName, "RenderScale")) {
+    if (InputStringEqualsNoCase(szValue, "Screen")) {
+      g_fRenderScale = ROLLER_RENDER_SCALE_MATCH_SCREEN;
+      return 1;
+    }
     g_fRenderScale = (float)atof(szValue);
     if (g_fRenderScale < 0.25f) g_fRenderScale = 1.0f;
     return 1;
@@ -3776,7 +3780,10 @@ void InputSaveConfig(void)
           g_iAnisotropyLevel == 2 ? "8x" : "16x");
   fprintf(fp, "Trilinear=%s\n", g_bTrilinear ? "On" : "Off");
   fprintf(fp, "LodBias=%.2f\n", g_fLodBias);
-  fprintf(fp, "RenderScale=%.2f\n", g_fRenderScale);
+  if (g_fRenderScale == ROLLER_RENDER_SCALE_MATCH_SCREEN)
+    fprintf(fp, "RenderScale=Screen\n");
+  else
+    fprintf(fp, "RenderScale=%.2f\n", g_fRenderScale);
   fprintf(fp, "RenderNative=%s\n", g_bRenderNative ? "On" : "Off");
   fprintf(fp, "AntiAliasing=%s\n",
           g_iAntiAliasing == 3 ? "8x" : g_iAntiAliasing == 2 ? "4x" :

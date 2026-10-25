@@ -27,6 +27,9 @@ extern bool  g_bTrilinear;       /* true = blend linearly between mip levels */
 extern bool  g_bDisableMipmaps;  /* true = clamp sampler to mip 0 (debug) */
 extern float g_fLodBias;         /* mip LOD bias; 0 = neutral */
 extern float g_fRenderScale;     /* render resolution multiplier; 1.0 = native */
+/* g_fRenderScale value meaning "render the main view at exactly the window's
+ * pixel size" (RenderScale=Screen in ROLLER.INI), so the final blit is 1:1. */
+#define ROLLER_RENDER_SCALE_MATCH_SCREEN 0.0f
 extern int   g_iAntiAliasing;    /* 0=off, 1=MSAA 2x, 2=MSAA 4x, 3=MSAA 8x */
 extern bool  g_bVsync;           /* true = vsync on */
 extern int   g_iFpsDisplay;      /* 0=off, 1=top-left, 2=top-right, 3=bottom-left, 4=bottom-right */
