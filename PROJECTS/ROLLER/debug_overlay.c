@@ -66,6 +66,7 @@ struct DebugOverlay {
 #endif
   SDL_Window            *pWindow;
   bool                   bVisible;
+  bool                   bCompactPanel;  /* show only the small Tuning panel */
 
   struct nk_context      nk;
   struct nk_font_atlas   atlas;
@@ -933,6 +934,203 @@ static void DrawHintPanel(DebugOverlay *pOverlay) {
 
 // ---------------------------------------------------------------------------
 
+// Look settings (fog, FOV, vignette, ambient occlusion, brightness,
+// contrast, gamma, saturation), shared by the Graphics panel and the
+// compact tuning panel. Expects the caller to have opened a
+// nk_widget_disable region when !bGPU, and leaves it that way.
+static void DrawLookSettings(struct nk_context *pCtx, bool bGPU) {
+  { char buf[20]; snprintf(buf, sizeof(buf), "Fog start %.0f", g_fFogStart);
+    nk_layout_row_dynamic(pCtx, DEBUG_ROW_H, 2);
+    nk_label(pCtx, buf, NK_TEXT_LEFT);
+    float fNewFogStart = nk_slide_float(pCtx, 0.0f, g_fFogStart, 10000.0f, 50.0f);
+    if (fNewFogStart != g_fFogStart) {
+      g_fFogStart = fNewFogStart;
+      game_render_set_fog_start(g_pGameRenderer, g_fFogStart);
+      InputSaveConfig();
+    }
+  }
+
+  { char buf[24]; snprintf(buf, sizeof(buf), "Fog density %.5f", g_fFogDensity);
+    nk_layout_row_dynamic(pCtx, DEBUG_ROW_H, 2);
+    nk_label(pCtx, buf, NK_TEXT_LEFT);
+    float fNewFog = nk_slide_float(pCtx, 0.0f, g_fFogDensity, 0.0001f, 0.000001f);
+    if (fNewFog != g_fFogDensity) {
+      g_fFogDensity = fNewFog;
+      game_render_set_fog_density(g_pGameRenderer, g_fFogDensity);
+      InputSaveConfig();
+    }
+  }
+
+  if (!bGPU) nk_widget_disable_end(pCtx);
+
+  if (!bGPU || frontend_on) nk_widget_disable_begin(pCtx);
+
+  { static char szBuf[8]; static int iLen = 0; static nk_flags lastEv = 0;
+    /* Only sync buffer from global when the field was not active last frame,
+     * so we never clobber Nuklear's internal edit state mid-edit. */
+    if (!(lastEv & NK_EDIT_ACTIVE)) {
+      snprintf(szBuf, sizeof(szBuf), "%06x", g_uFogColor);
+      iLen = 6;
+    }
+    nk_layout_row_dynamic(pCtx, DEBUG_ROW_H, 2);
+    nk_label(pCtx, "Fog color", NK_TEXT_LEFT);
+    nk_flags ev = nk_edit_string(pCtx,
+                                 NK_EDIT_FIELD|NK_EDIT_SIG_ENTER|NK_EDIT_AUTO_SELECT,
+                                 szBuf, &iLen, 7, nk_filter_hex);
+    if (!bGPU || frontend_on) nk_widget_disable_end(pCtx);
+    lastEv = frontend_on ? 0 : ev;
+    if (!frontend_on && (ev & (NK_EDIT_DEACTIVATED | NK_EDIT_COMMITED))) {
+      szBuf[iLen < 7 ? iLen : 6] = '\0';
+      if (iLen == 6) {
+        unsigned int uNew = 0;
+        if (sscanf(szBuf, "%x", &uNew) == 1) {
+          g_uFogColor = uNew & 0xFFFFFFu;
+          game_render_set_fog_color(g_pGameRenderer,
+              ((g_uFogColor >> 16) & 0xFF) / 255.0f,
+              ((g_uFogColor >>  8) & 0xFF) / 255.0f,
+              ( g_uFogColor        & 0xFF) / 255.0f);
+          InputSaveConfig();
+        }
+      }
+    }
+  }
+
+  if (!bGPU) nk_widget_disable_begin(pCtx);
+
+  { char buf[14]; snprintf(buf, sizeof(buf), "FOV %.2f", g_fFovMultiplier);
+    nk_layout_row_dynamic(pCtx, DEBUG_ROW_H, 2);
+    nk_label(pCtx, buf, NK_TEXT_LEFT);
+    float fNewFov = nk_slide_float(pCtx, 0.5f, g_fFovMultiplier, 2.0f, 0.05f);
+    if (fNewFov != g_fFovMultiplier) {
+      g_fFovMultiplier = fNewFov;
+      game_render_set_fov_multiplier(g_pGameRenderer, g_fFovMultiplier);
+      InputSaveConfig();
+    }
+  }
+
+  { char buf[18]; snprintf(buf, sizeof(buf), "Vignette %.2f", g_fVigStrength);
+    nk_layout_row_dynamic(pCtx, DEBUG_ROW_H, 2);
+    nk_label(pCtx, buf, NK_TEXT_LEFT);
+    float fNewVig = nk_slide_float(pCtx, 0.0f, g_fVigStrength, 2.0f, 0.05f);
+    if (fNewVig != g_fVigStrength) {
+      g_fVigStrength = fNewVig;
+      game_render_set_vignette(g_pGameRenderer, g_fVigStrength);
+      InputSaveConfig();
+    }
+  }
+
+  /* Ambient occlusion (ssao.c): needs MSAA off, since MSAA depth can't
+   * be sampled; the label says so rather than silently doing nothing. */
+  {
+    bool bAOChanged = false;
+    nk_layout_row_dynamic(pCtx, DEBUG_ROW_H, 1);
+    int bAO = (int)g_bAmbientOcclusion;
+    if (nk_checkbox_label(pCtx, g_iAntiAliasing ? "Ambient occlusion (needs AA off)"
+                                                 : "Ambient occlusion", &bAO)) {
+      g_bAmbientOcclusion = (bool)bAO;
+      bAOChanged = true;
+    }
+    if (g_bAmbientOcclusion) {
+      char buf[24];
+      snprintf(buf, sizeof(buf), "AO radius %.0f", g_fAORadius);
+      nk_layout_row_dynamic(pCtx, DEBUG_ROW_H, 2);
+      nk_label(pCtx, buf, NK_TEXT_LEFT);
+      float fNewRadius = nk_slide_float(pCtx, 100.0f, g_fAORadius, 2000.0f, 25.0f);
+      if (fNewRadius != g_fAORadius) { g_fAORadius = fNewRadius; bAOChanged = true; }
+
+      snprintf(buf, sizeof(buf), "AO strength %.2f", g_fAOStrength);
+      nk_layout_row_dynamic(pCtx, DEBUG_ROW_H, 2);
+      nk_label(pCtx, buf, NK_TEXT_LEFT);
+      float fNewStrength = nk_slide_float(pCtx, 0.0f, g_fAOStrength, 2.0f, 0.05f);
+      if (fNewStrength != g_fAOStrength) { g_fAOStrength = fNewStrength; bAOChanged = true; }
+    }
+    if (bAOChanged) {
+      game_render_set_ambient_occlusion(g_pGameRenderer, g_bAmbientOcclusion,
+                                        g_fAORadius, g_fAOStrength);
+      InputSaveConfig();
+    }
+  }
+
+  { char buf[20]; snprintf(buf, sizeof(buf), "Brightness %.2f", g_fBrightness);
+    nk_layout_row_dynamic(pCtx, DEBUG_ROW_H, 2);
+    nk_label(pCtx, buf, NK_TEXT_LEFT);
+    float fNewBrightness = nk_slide_float(pCtx, -0.5f, g_fBrightness, 0.5f, 0.02f);
+    if (fNewBrightness != g_fBrightness) {
+      g_fBrightness = fNewBrightness;
+      game_render_set_brightness(g_pGameRenderer, g_fBrightness);
+      InputSaveConfig();
+    }
+  }
+
+  { char buf[18]; snprintf(buf, sizeof(buf), "Contrast %.2f", g_fContrast);
+    nk_layout_row_dynamic(pCtx, DEBUG_ROW_H, 2);
+    nk_label(pCtx, buf, NK_TEXT_LEFT);
+    float fNewContrast = nk_slide_float(pCtx, 0.0f, g_fContrast, 3.0f, 0.05f);
+    if (fNewContrast != g_fContrast) {
+      g_fContrast = fNewContrast;
+      game_render_set_contrast(g_pGameRenderer, g_fContrast);
+      InputSaveConfig();
+    }
+  }
+
+  { char buf[16]; snprintf(buf, sizeof(buf), "Gamma %.2f", g_fGamma);
+    nk_layout_row_dynamic(pCtx, DEBUG_ROW_H, 2);
+    nk_label(pCtx, buf, NK_TEXT_LEFT);
+    float fNewGamma = nk_slide_float(pCtx, 0.5f, g_fGamma, 2.5f, 0.05f);
+    if (fNewGamma != g_fGamma) {
+      g_fGamma = fNewGamma;
+      game_render_set_gamma(g_pGameRenderer, g_fGamma);
+      InputSaveConfig();
+    }
+  }
+
+  { char buf[20]; snprintf(buf, sizeof(buf), "Saturation %.2f", g_fSaturation);
+    nk_layout_row_dynamic(pCtx, DEBUG_ROW_H, 2);
+    nk_label(pCtx, buf, NK_TEXT_LEFT);
+    float fNewSat = nk_slide_float(pCtx, 0.0f, g_fSaturation, 3.0f, 0.05f);
+    if (fNewSat != g_fSaturation) {
+      g_fSaturation = fNewSat;
+      game_render_set_saturation(g_pGameRenderer, g_fSaturation);
+      InputSaveConfig();
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+
+#define COMPACT_PANEL_W 420
+#define COMPACT_PANEL_H 700
+
+// Small, more see-through panel with only the look settings, docked to the
+// right edge so the race stays visible while tuning. Movable and resizable;
+// "Full menu" switches back.
+static void DrawCompactPanel(DebugOverlay *pOverlay) {
+  struct nk_context *pCtx = &pOverlay->nk;
+  nk_style_push_style_item(pCtx, &pCtx->style.window.fixed_background,
+                           nk_style_item_color(nk_rgba(45, 45, 45, 140)));
+  if (nk_begin(pCtx, "Tuning",
+               nk_rect(OVERLAY_W - COMPACT_PANEL_W - PANEL_MARGIN, PANEL_MARGIN,
+                       COMPACT_PANEL_W, COMPACT_PANEL_H),
+               NK_WINDOW_BORDER | NK_WINDOW_TITLE | NK_WINDOW_MOVABLE | NK_WINDOW_SCALABLE)) {
+    nk_layout_row_dynamic(pCtx, DEBUG_ROW_H, 1);
+    if (nk_button_label(pCtx, "Full menu"))
+      pOverlay->bCompactPanel = false;
+
+    int bGPU = 0;
+#if !defined(IS_WASM)
+    MenuRenderer *pRenderer = GetMenuRenderer();
+    bGPU = pRenderer && menu_render_get_pending_mode(pRenderer) == MENU_RENDER_GPU;
+#endif
+    if (!bGPU) nk_widget_disable_begin(pCtx);
+    DrawLookSettings(pCtx, bGPU);
+    if (!bGPU) nk_widget_disable_end(pCtx);
+  }
+  nk_end(pCtx);
+  nk_style_pop_style_item(pCtx);
+}
+
+// ---------------------------------------------------------------------------
+
 static void DrawDebugPanel(DebugOverlay *pOverlay) {
   struct nk_context *pCtx = &pOverlay->nk;
 #if defined(IS_WASM)
@@ -1151,6 +1349,10 @@ static void DrawDebugPanel(DebugOverlay *pOverlay) {
   if (nk_begin(pCtx, "Graphics",
                nk_rect(GRAPHICS_PANEL_X, PANEL_Y, PANEL_COLUMN_W, PANEL_H),
                NK_WINDOW_BORDER | NK_WINDOW_TITLE)) {
+    nk_layout_row_dynamic(pCtx, DEBUG_ROW_H, 1);
+    if (nk_button_label(pCtx, "Compact tuning panel"))
+      pOverlay->bCompactPanel = true;
+
     {
       static const char *apszCRTFilterModes[] = { "Off", "VGA", "Hyllian" };
       nk_layout_row_dynamic(pCtx, DEBUG_ROW_H, 2);
@@ -1290,161 +1492,7 @@ static void DrawDebugPanel(DebugOverlay *pOverlay) {
 
       if (!bGPU) nk_widget_disable_begin(pCtx);
 
-      { char buf[20]; snprintf(buf, sizeof(buf), "Fog start %.0f", g_fFogStart);
-        nk_layout_row_dynamic(pCtx, DEBUG_ROW_H, 2);
-        nk_label(pCtx, buf, NK_TEXT_LEFT);
-        float fNewFogStart = nk_slide_float(pCtx, 0.0f, g_fFogStart, 10000.0f, 50.0f);
-        if (fNewFogStart != g_fFogStart) {
-          g_fFogStart = fNewFogStart;
-          game_render_set_fog_start(g_pGameRenderer, g_fFogStart);
-          InputSaveConfig();
-        }
-      }
-
-      { char buf[24]; snprintf(buf, sizeof(buf), "Fog density %.5f", g_fFogDensity);
-        nk_layout_row_dynamic(pCtx, DEBUG_ROW_H, 2);
-        nk_label(pCtx, buf, NK_TEXT_LEFT);
-        float fNewFog = nk_slide_float(pCtx, 0.0f, g_fFogDensity, 0.0001f, 0.000001f);
-        if (fNewFog != g_fFogDensity) {
-          g_fFogDensity = fNewFog;
-          game_render_set_fog_density(g_pGameRenderer, g_fFogDensity);
-          InputSaveConfig();
-        }
-      }
-
-      if (!bGPU) nk_widget_disable_end(pCtx);
-
-      if (!bGPU || frontend_on) nk_widget_disable_begin(pCtx);
-
-      { static char szBuf[8]; static int iLen = 0; static nk_flags lastEv = 0;
-        /* Only sync buffer from global when the field was not active last frame,
-         * so we never clobber Nuklear's internal edit state mid-edit. */
-        if (!(lastEv & NK_EDIT_ACTIVE)) {
-          snprintf(szBuf, sizeof(szBuf), "%06x", g_uFogColor);
-          iLen = 6;
-        }
-        nk_layout_row_dynamic(pCtx, DEBUG_ROW_H, 2);
-        nk_label(pCtx, "Fog color", NK_TEXT_LEFT);
-        nk_flags ev = nk_edit_string(pCtx,
-                                     NK_EDIT_FIELD|NK_EDIT_SIG_ENTER|NK_EDIT_AUTO_SELECT,
-                                     szBuf, &iLen, 7, nk_filter_hex);
-        if (!bGPU || frontend_on) nk_widget_disable_end(pCtx);
-        lastEv = frontend_on ? 0 : ev;
-        if (!frontend_on && (ev & (NK_EDIT_DEACTIVATED | NK_EDIT_COMMITED))) {
-          szBuf[iLen < 7 ? iLen : 6] = '\0';
-          if (iLen == 6) {
-            unsigned int uNew = 0;
-            if (sscanf(szBuf, "%x", &uNew) == 1) {
-              g_uFogColor = uNew & 0xFFFFFFu;
-              game_render_set_fog_color(g_pGameRenderer,
-                  ((g_uFogColor >> 16) & 0xFF) / 255.0f,
-                  ((g_uFogColor >>  8) & 0xFF) / 255.0f,
-                  ( g_uFogColor        & 0xFF) / 255.0f);
-              InputSaveConfig();
-            }
-          }
-        }
-      }
-
-      if (!bGPU) nk_widget_disable_begin(pCtx);
-
-      { char buf[14]; snprintf(buf, sizeof(buf), "FOV %.2f", g_fFovMultiplier);
-        nk_layout_row_dynamic(pCtx, DEBUG_ROW_H, 2);
-        nk_label(pCtx, buf, NK_TEXT_LEFT);
-        float fNewFov = nk_slide_float(pCtx, 0.5f, g_fFovMultiplier, 2.0f, 0.05f);
-        if (fNewFov != g_fFovMultiplier) {
-          g_fFovMultiplier = fNewFov;
-          game_render_set_fov_multiplier(g_pGameRenderer, g_fFovMultiplier);
-          InputSaveConfig();
-        }
-      }
-
-      { char buf[18]; snprintf(buf, sizeof(buf), "Vignette %.2f", g_fVigStrength);
-        nk_layout_row_dynamic(pCtx, DEBUG_ROW_H, 2);
-        nk_label(pCtx, buf, NK_TEXT_LEFT);
-        float fNewVig = nk_slide_float(pCtx, 0.0f, g_fVigStrength, 2.0f, 0.05f);
-        if (fNewVig != g_fVigStrength) {
-          g_fVigStrength = fNewVig;
-          game_render_set_vignette(g_pGameRenderer, g_fVigStrength);
-          InputSaveConfig();
-        }
-      }
-
-      /* Ambient occlusion (ssao.c): needs MSAA off, since MSAA depth can't
-       * be sampled; the label says so rather than silently doing nothing. */
-      {
-        bool bAOChanged = false;
-        nk_layout_row_dynamic(pCtx, DEBUG_ROW_H, 1);
-        int bAO = (int)g_bAmbientOcclusion;
-        if (nk_checkbox_label(pCtx, g_iAntiAliasing ? "Ambient occlusion (needs AA off)"
-                                                     : "Ambient occlusion", &bAO)) {
-          g_bAmbientOcclusion = (bool)bAO;
-          bAOChanged = true;
-        }
-        if (g_bAmbientOcclusion) {
-          char buf[24];
-          snprintf(buf, sizeof(buf), "AO radius %.0f", g_fAORadius);
-          nk_layout_row_dynamic(pCtx, DEBUG_ROW_H, 2);
-          nk_label(pCtx, buf, NK_TEXT_LEFT);
-          float fNewRadius = nk_slide_float(pCtx, 100.0f, g_fAORadius, 2000.0f, 25.0f);
-          if (fNewRadius != g_fAORadius) { g_fAORadius = fNewRadius; bAOChanged = true; }
-
-          snprintf(buf, sizeof(buf), "AO strength %.2f", g_fAOStrength);
-          nk_layout_row_dynamic(pCtx, DEBUG_ROW_H, 2);
-          nk_label(pCtx, buf, NK_TEXT_LEFT);
-          float fNewStrength = nk_slide_float(pCtx, 0.0f, g_fAOStrength, 2.0f, 0.05f);
-          if (fNewStrength != g_fAOStrength) { g_fAOStrength = fNewStrength; bAOChanged = true; }
-        }
-        if (bAOChanged) {
-          game_render_set_ambient_occlusion(g_pGameRenderer, g_bAmbientOcclusion,
-                                            g_fAORadius, g_fAOStrength);
-          InputSaveConfig();
-        }
-      }
-
-      { char buf[20]; snprintf(buf, sizeof(buf), "Brightness %.2f", g_fBrightness);
-        nk_layout_row_dynamic(pCtx, DEBUG_ROW_H, 2);
-        nk_label(pCtx, buf, NK_TEXT_LEFT);
-        float fNewBrightness = nk_slide_float(pCtx, -0.5f, g_fBrightness, 0.5f, 0.02f);
-        if (fNewBrightness != g_fBrightness) {
-          g_fBrightness = fNewBrightness;
-          game_render_set_brightness(g_pGameRenderer, g_fBrightness);
-          InputSaveConfig();
-        }
-      }
-
-      { char buf[18]; snprintf(buf, sizeof(buf), "Contrast %.2f", g_fContrast);
-        nk_layout_row_dynamic(pCtx, DEBUG_ROW_H, 2);
-        nk_label(pCtx, buf, NK_TEXT_LEFT);
-        float fNewContrast = nk_slide_float(pCtx, 0.0f, g_fContrast, 3.0f, 0.05f);
-        if (fNewContrast != g_fContrast) {
-          g_fContrast = fNewContrast;
-          game_render_set_contrast(g_pGameRenderer, g_fContrast);
-          InputSaveConfig();
-        }
-      }
-
-      { char buf[16]; snprintf(buf, sizeof(buf), "Gamma %.2f", g_fGamma);
-        nk_layout_row_dynamic(pCtx, DEBUG_ROW_H, 2);
-        nk_label(pCtx, buf, NK_TEXT_LEFT);
-        float fNewGamma = nk_slide_float(pCtx, 0.5f, g_fGamma, 2.5f, 0.05f);
-        if (fNewGamma != g_fGamma) {
-          g_fGamma = fNewGamma;
-          game_render_set_gamma(g_pGameRenderer, g_fGamma);
-          InputSaveConfig();
-        }
-      }
-
-      { char buf[20]; snprintf(buf, sizeof(buf), "Saturation %.2f", g_fSaturation);
-        nk_layout_row_dynamic(pCtx, DEBUG_ROW_H, 2);
-        nk_label(pCtx, buf, NK_TEXT_LEFT);
-        float fNewSat = nk_slide_float(pCtx, 0.0f, g_fSaturation, 3.0f, 0.05f);
-        if (fNewSat != g_fSaturation) {
-          g_fSaturation = fNewSat;
-          game_render_set_saturation(g_pGameRenderer, g_fSaturation);
-          InputSaveConfig();
-        }
-      }
+      DrawLookSettings(pCtx, bGPU);
 
       { char buf[20]; snprintf(buf, sizeof(buf), "Mirror FOV %.2f", g_fMirrorFov);
         nk_layout_row_dynamic(pCtx, DEBUG_ROW_H, 2);
@@ -1688,8 +1736,12 @@ void debug_overlay_render(DebugOverlay *pOverlay,
   pOverlay->bInputBegun = false;
 
   if (pOverlay->bVisible) {
-    DrawHintPanel(pOverlay);
-    DrawDebugPanel(pOverlay);
+    if (pOverlay->bCompactPanel) {
+      DrawCompactPanel(pOverlay);
+    } else {
+      DrawHintPanel(pOverlay);
+      DrawDebugPanel(pOverlay);
+    }
   }
 
 #if defined(IS_WASM)
