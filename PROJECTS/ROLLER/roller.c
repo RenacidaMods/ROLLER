@@ -32,6 +32,10 @@
 #include <string.h>
 #include <ctype.h>
 #include <time.h>
+/* Added by ROLLER: streams audio/trackNN.mp3 CD music tracks (see
+ * external/dr_libs/README.md). The implementation is compiled here only. */
+#define DR_MP3_IMPLEMENTATION
+#include "../../external/dr_libs/dr_mp3.h"
 #if defined(_WIN32)
 #define strtok_r strtok_s
 #endif
@@ -1621,7 +1625,9 @@ static bool ROLLERFindAudioTrackPath(int iTrack, char *szOutPath, size_t uiOutPa
   char szTrackFile[ROLLER_MAX_PATH];
   const char *apszTrackPaths[] = {
     "./audio/track%02d.wav",
-    "../audio/track%02d.wav"
+    "../audio/track%02d.wav",
+    "./audio/track%02d.mp3",
+    "../audio/track%02d.mp3"
   };
 
   for (int iPath = 0; iPath < (int)(sizeof(apszTrackPaths) / sizeof(apszTrackPaths[0])); ++iPath) {
@@ -2949,6 +2955,55 @@ static SDL_AudioStream *g_pCurrentStream = NULL;
 static uint8 *g_pAudioData = NULL;
 static uint32 g_uiAudioLen = 0;
 
+// .mp3 tracks are decoded a few seconds at a time instead of loaded whole:
+// a full track decodes to ~100 MB and would stall the game on every track
+// change. UpdateAudioTracks tops the stream up; the track only counts as
+// finished once the decoder has hit the end AND the queue has drained, so a
+// long loading screen that empties the queue can't skip or restart a track.
+#define ROLLER_MP3_BUFFER_SECONDS 8
+#define ROLLER_MP3_CHUNK_FRAMES   4096
+static drmp3 g_mp3;
+static bool  g_bMp3Open = false;
+static bool  g_bMp3Done = false;
+
+static bool ROLLERIsMp3Path(const char *szPath)
+{
+  size_t uiLen = strlen(szPath);
+  return uiLen >= 4 && SDL_strcasecmp(szPath + uiLen - 4, ".mp3") == 0;
+}
+
+static void ROLLERFeedMp3Track(void)
+{
+  if (!g_bMp3Open || g_bMp3Done || !g_pCurrentStream)
+    return;
+
+  int iBytesPerFrame = (int)g_mp3.channels * (int)sizeof(drmp3_int16);
+  int iTargetBytes = (int)g_mp3.sampleRate * iBytesPerFrame * ROLLER_MP3_BUFFER_SECONDS;
+  drmp3_int16 aChunk[ROLLER_MP3_CHUNK_FRAMES * 2];  // MP3 has at most 2 channels
+
+  while (SDL_GetAudioStreamQueued(g_pCurrentStream) < iTargetBytes) {
+    drmp3_uint64 ullFrames = drmp3_read_pcm_frames_s16(&g_mp3, ROLLER_MP3_CHUNK_FRAMES, aChunk);
+    if (ullFrames == 0) {
+      g_bMp3Done = true;
+      break;
+    }
+    if (!SDL_PutAudioStreamData(g_pCurrentStream, aChunk, (int)ullFrames * iBytesPerFrame)) {
+      SDL_Log("Failed to queue MP3 audio: %s", SDL_GetError());
+      g_bMp3Done = true;
+      break;
+    }
+  }
+}
+
+static void ROLLERCloseMp3Track(void)
+{
+  if (g_bMp3Open) {
+    drmp3_uninit(&g_mp3);
+    g_bMp3Open = false;
+  }
+  g_bMp3Done = false;
+}
+
 #ifdef IS_WINDOWS
 static MCIDEVICEID g_wDeviceID = 0;
 #else
@@ -3057,6 +3112,7 @@ void ROLLERStopTrack()
       SDL_DestroyAudioStream(g_pCurrentStream);
       g_pCurrentStream = NULL;
     }
+    ROLLERCloseMp3Track();
     if (g_pAudioData) {
       SDL_free(g_pAudioData);
       g_pAudioData = NULL;
@@ -3068,6 +3124,35 @@ void ROLLERStopTrack()
 }
 
 //-------------------------------------------------------------------------------------------------
+
+// Opens an .mp3 track, queues its first few seconds and starts playback.
+static bool ROLLERStartMp3Track(const char *szTrackFile)
+{
+  if (!drmp3_init_file(&g_mp3, szTrackFile, NULL)) {
+    SDL_Log("Failed to open CD audio MP3 '%s'", szTrackFile);
+    return false;
+  }
+  g_bMp3Open = true;
+  g_bMp3Done = false;
+
+  SDL_AudioSpec spec;
+  spec.format   = SDL_AUDIO_S16;
+  spec.channels = (int)g_mp3.channels;
+  spec.freq     = (int)g_mp3.sampleRate;
+  g_pCurrentStream = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, NULL, NULL);
+  if (!g_pCurrentStream) {
+    SDL_Log("Failed to open audio device for CD audio track '%s': %s", szTrackFile, SDL_GetError());
+    ROLLERCloseMp3Track();
+    return false;
+  }
+
+  SDL_SetAudioStreamGain(g_pCurrentStream, g_iCDVolume / 255.0f);
+  ROLLERFeedMp3Track();
+  SDL_ResumeAudioStreamDevice(g_pCurrentStream);
+  SDL_Log("Started CD audio track '%s' (MP3, %d Hz, %d channels)",
+          szTrackFile, spec.freq, spec.channels);
+  return true;
+}
 
 void ROLLERPlayTrack(int iTrack)
 {
@@ -3109,7 +3194,11 @@ void ROLLERPlayTrack(int iTrack)
     char szTrackFile[ROLLER_MAX_PATH];
     SDL_AudioSpec spec;
 
-    if (ROLLERFindAudioTrackPath(iTrack, szTrackFile, sizeof(szTrackFile))) {
+    if (ROLLERFindAudioTrackPath(iTrack, szTrackFile, sizeof(szTrackFile))
+        && ROLLERIsMp3Path(szTrackFile)) {
+      if (ROLLERStartMp3Track(szTrackFile))
+        iStarted = -1;
+    } else if (ROLLERFindAudioTrackPath(iTrack, szTrackFile, sizeof(szTrackFile))) {
       SDL_IOStream *io = SDL_IOFromFile(szTrackFile, "rb");
       if (!io) {
         SDL_Log("Failed to open CD audio track '%s': %s", szTrackFile, SDL_GetError());
@@ -3151,7 +3240,6 @@ void ROLLERPlayTrack(int iTrack)
     } else {
       SDL_Log("CD audio track %02d not found in audio folder", iTrack);
     }
-    // Add OGG/MP3 support here if using SDL_mixer
   }
 
   if (iStarted)
@@ -3281,9 +3369,11 @@ void UpdateAudioTracks(void)
     }
 #endif
   } else if (g_pCurrentStream) {
-      // Check file playback
+      // Check file playback (MP3 tracks are topped up first and only finish
+      // once fully decoded, see ROLLER_MP3_BUFFER_SECONDS)
+    ROLLERFeedMp3Track();
     int iQueued = SDL_GetAudioStreamQueued(g_pCurrentStream);
-    if (iQueued == 0) {
+    if (iQueued == 0 && (!g_bMp3Open || g_bMp3Done)) {
       bTrackFinished = true;
     }
   }
