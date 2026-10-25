@@ -1245,6 +1245,18 @@ void readuserdata(int iPlayer)
     if (rud_swheel[iPlayer] > iMaxSteering)
       goto LABEL_43;
   }
+  // Added by ROLLER: optional instant keyboard steering. The original
+  // keyboard path below ramps the turn rate up from zero each tick, taking
+  // 13 ticks (0.36 s at 36 Hz) to reach full lock and 11 to recentre for the
+  // Auto Arien, while
+  // a gamepad stick sets the wheel straight from its position. This gives
+  // keys the gamepad's behaviour: full lock while held, centre on release.
+  else if (g_bInstantKeyboardSteering) {
+    bool bLeft = InputGetActionPressed(iKeyIndex);
+    bool bRight = !bLeft && InputGetActionPressed(iKeyIndex + 1);
+    rud_turn[iPlayer] = -1;
+    rud_swheel[iPlayer] = bLeft ? rud_steer[iPlayer] : bRight ? -rud_steer[iPlayer] : 0;
+  }
   // Keyboard steering processing
   // process left steering
   else if (InputGetActionPressed(iKeyIndex)) {

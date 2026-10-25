@@ -133,6 +133,7 @@ bool g_bAirborneCollisions = false;
 bool g_bAINoCheatStart = false;  //  Set true to not give AI cars an advantage during race start
 bool g_bFixCarMenuBug = true;
 bool g_bImprovedJumpLanding = true;
+bool g_bInstantKeyboardSteering = false;
 bool g_bNoclip = false;
 bool g_bShowCarOnExplosion = false;
 bool g_bBrazilianMayte = false;

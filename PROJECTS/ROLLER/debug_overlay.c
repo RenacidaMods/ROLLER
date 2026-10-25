@@ -1283,6 +1283,13 @@ static void DrawDebugPanel(DebugOverlay *pOverlay) {
       InputSaveConfig();
     }
 
+    int bInstantSteering = (int)g_bInstantKeyboardSteering;
+    nk_layout_row_dynamic(pCtx, DEBUG_ROW_H, 1);
+    if (nk_checkbox_label(pCtx, "Instant keyboard steering", &bInstantSteering)) {
+      g_bInstantKeyboardSteering = (bool)bInstantSteering;
+      InputSaveConfig();
+    }
+
     int bNoclip = (int)g_bNoclip;
     nk_layout_row_dynamic(pCtx, DEBUG_ROW_H, 1);
     if (nk_checkbox_label(pCtx, "Noclip", &bNoclip)) {

@@ -17,6 +17,7 @@ extern bool g_bAirborneCollisions;
 extern bool g_bAINoCheatStart;
 extern bool g_bFixCarMenuBug;
 extern bool g_bImprovedJumpLanding;
+extern bool g_bInstantKeyboardSteering; /* keys give full lock at once and centre on release, like a gamepad stick */
 extern bool g_bNoclip;
 extern bool g_bShowCarOnExplosion; /* true = keep car mesh visible during explosion animation */
 extern bool g_bBrazilianMayte; /* true = MAYTE cheat car uses the Brazilian FATAL.EXE's nitro-boost behavior instead of the original top-speed one, regardless of whether the boost is currently active */
