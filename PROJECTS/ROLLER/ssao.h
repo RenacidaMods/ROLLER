@@ -18,6 +18,7 @@ typedef struct {
     float fadeEnd;         /* view distance where AO has gone */
     float fogDensity;      /* scene fog, so AO fades with it */
     float fogStart;
+    bool  showOnly;        /* debug: replace the scene with the AO term (greyscale) */
 } SSAOParams;
 
 SSAOPass *ssao_create(SDL_GPUDevice *device, SDL_GPUTextureFormat colorFormat);

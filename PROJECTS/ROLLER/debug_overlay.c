@@ -1043,6 +1043,12 @@ static void DrawLookSettings(struct nk_context *pCtx, bool bGPU) {
       nk_label(pCtx, buf, NK_TEXT_LEFT);
       float fNewStrength = nk_slide_float(pCtx, 0.0f, g_fAOStrength, 2.0f, 0.05f);
       if (fNewStrength != g_fAOStrength) { g_fAOStrength = fNewStrength; bAOChanged = true; }
+
+      /* Debug view, not saved: shows what AO picks up, in greyscale. */
+      static int s_bAOShowOnly = 0;
+      nk_layout_row_dynamic(pCtx, DEBUG_ROW_H, 1);
+      if (nk_checkbox_label(pCtx, "AO only view (debug)", &s_bAOShowOnly))
+        game_render_set_ambient_occlusion_view(g_pGameRenderer, s_bAOShowOnly != 0);
     }
     if (bAOChanged) {
       game_render_set_ambient_occlusion(g_pGameRenderer, g_bAmbientOcclusion,

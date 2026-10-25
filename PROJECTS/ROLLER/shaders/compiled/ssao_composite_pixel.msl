@@ -30,44 +30,59 @@ struct main0_in
 fragment main0_out main0(main0_in in [[stage_in]], constant type_SSAOCompositeUniforms& SSAOCompositeUniforms [[buffer(0)]], texture2d<float> aoTex [[texture(0)]], texture2d<float> depthTex [[texture(1)]], sampler aoSampler [[sampler(0)]])
 {
     main0_out out = {};
-    float4 _342;
+    float4 _550;
     do
     {
-        float2 _63 = SSAOCompositeUniforms.depthSize - float2(1.0);
-        int2 _69 = int3(int2(fast::clamp(in.in_var_TEXCOORD0 * SSAOCompositeUniforms.depthSize, float2(0.0), _63)), 0).xy;
-        float4 _71 = depthTex.read(uint2(_69), 0);
-        float _72 = _71.x;
-        if (_72 >= 0.99999988079071044921875)
+        float2 _74 = SSAOCompositeUniforms.depthSize - float2(1.0);
+        float4 _82 = depthTex.read(uint2(int3(int2(fast::clamp(in.in_var_TEXCOORD0 * SSAOCompositeUniforms.depthSize, float2(0.0), _74)), 0).xy), 0);
+        float _83 = _82.x;
+        if (_83 >= 0.99999988079071044921875)
         {
-            _342 = float4(1.0);
+            _550 = float4(1.0);
             break;
         }
-        float _81 = SSAOCompositeUniforms.zB / (_72 - SSAOCompositeUniforms.zF);
-        float2 _86 = in.in_var_TEXCOORD0 + (float2(-1.0) / SSAOCompositeUniforms.aoSize);
-        float _103 = precise::max(_81 * 0.02999999932944774627685546875, 1.0);
-        float _105 = exp((-abs((SSAOCompositeUniforms.zB / (depthTex.read(uint2(int3(int2(fast::clamp(_86 * SSAOCompositeUniforms.depthSize, float2(0.0), _63)), 0).xy), 0).x - SSAOCompositeUniforms.zF)) - _81)) / _103);
-        float2 _113 = in.in_var_TEXCOORD0 + (float2(0.0, -1.0) / SSAOCompositeUniforms.aoSize);
-        float _130 = exp((-abs((SSAOCompositeUniforms.zB / (depthTex.read(uint2(int3(int2(fast::clamp(_113 * SSAOCompositeUniforms.depthSize, float2(0.0), _63)), 0).xy), 0).x - SSAOCompositeUniforms.zF)) - _81)) / _103);
-        float2 _140 = in.in_var_TEXCOORD0 + (float2(1.0, -1.0) / SSAOCompositeUniforms.aoSize);
-        float _157 = exp((-abs((SSAOCompositeUniforms.zB / (depthTex.read(uint2(int3(int2(fast::clamp(_140 * SSAOCompositeUniforms.depthSize, float2(0.0), _63)), 0).xy), 0).x - SSAOCompositeUniforms.zF)) - _81)) / _103);
-        float2 _167 = in.in_var_TEXCOORD0 + (float2(-1.0, 0.0) / SSAOCompositeUniforms.aoSize);
-        float _184 = exp((-abs((SSAOCompositeUniforms.zB / (depthTex.read(uint2(int3(int2(fast::clamp(_167 * SSAOCompositeUniforms.depthSize, float2(0.0), _63)), 0).xy), 0).x - SSAOCompositeUniforms.zF)) - _81)) / _103);
-        float _203 = 2.0 * exp((-abs((SSAOCompositeUniforms.zB / (depthTex.read(uint2(_69), 0).x - SSAOCompositeUniforms.zF)) - _81)) / _103);
-        float2 _213 = in.in_var_TEXCOORD0 + (float2(1.0, 0.0) / SSAOCompositeUniforms.aoSize);
-        float _230 = exp((-abs((SSAOCompositeUniforms.zB / (depthTex.read(uint2(int3(int2(fast::clamp(_213 * SSAOCompositeUniforms.depthSize, float2(0.0), _63)), 0).xy), 0).x - SSAOCompositeUniforms.zF)) - _81)) / _103);
-        float2 _240 = in.in_var_TEXCOORD0 + (float2(-1.0, 1.0) / SSAOCompositeUniforms.aoSize);
-        float _257 = exp((-abs((SSAOCompositeUniforms.zB / (depthTex.read(uint2(int3(int2(fast::clamp(_240 * SSAOCompositeUniforms.depthSize, float2(0.0), _63)), 0).xy), 0).x - SSAOCompositeUniforms.zF)) - _81)) / _103);
-        float2 _267 = in.in_var_TEXCOORD0 + (float2(0.0, 1.0) / SSAOCompositeUniforms.aoSize);
-        float _284 = exp((-abs((SSAOCompositeUniforms.zB / (depthTex.read(uint2(int3(int2(fast::clamp(_267 * SSAOCompositeUniforms.depthSize, float2(0.0), _63)), 0).xy), 0).x - SSAOCompositeUniforms.zF)) - _81)) / _103);
-        float2 _293 = in.in_var_TEXCOORD0 + (float2(1.0) / SSAOCompositeUniforms.aoSize);
-        float _310 = exp((-abs((SSAOCompositeUniforms.zB / (depthTex.read(uint2(int3(int2(fast::clamp(_293 * SSAOCompositeUniforms.depthSize, float2(0.0), _63)), 0).xy), 0).x - SSAOCompositeUniforms.zF)) - _81)) / _103);
-        float _324 = precise::max(0.0, _81 - SSAOCompositeUniforms.fogStart);
-        float _335 = 1.0 - mix((((((((((aoTex.sample(aoSampler, _86, level(0.0)).x * _105) + (aoTex.sample(aoSampler, _113, level(0.0)).x * _130)) + (aoTex.sample(aoSampler, _140, level(0.0)).x * _157)) + (aoTex.sample(aoSampler, _167, level(0.0)).x * _184)) + (aoTex.sample(aoSampler, in.in_var_TEXCOORD0, level(0.0)).x * _203)) + (aoTex.sample(aoSampler, _213, level(0.0)).x * _230)) + (aoTex.sample(aoSampler, _240, level(0.0)).x * _257)) + (aoTex.sample(aoSampler, _267, level(0.0)).x * _284)) + (aoTex.sample(aoSampler, _293, level(0.0)).x * _310)) / precise::max((((((((_105 + _130) + _157) + _184) + _203) + _230) + _257) + _284) + _310, 9.9999997473787516355514526367188e-05), 1.0, fast::clamp(1.0 - exp((((-SSAOCompositeUniforms.fogDensity) * SSAOCompositeUniforms.fogDensity) * _324) * _324), 0.0, 1.0));
-        float _340 = fast::clamp(1.0 - (_335 * SSAOCompositeUniforms.strength), 0.0, 1.0);
-        _342 = float4(_340, _340, _340, 1.0);
+        float _92 = SSAOCompositeUniforms.zB / (_83 - SSAOCompositeUniforms.zF);
+        float2 _96 = in.in_var_TEXCOORD0 + (float2(-1.5) / SSAOCompositeUniforms.aoSize);
+        float _113 = precise::max(_92 * 0.02999999932944774627685546875, 1.0);
+        float _115 = exp((-abs((SSAOCompositeUniforms.zB / (depthTex.read(uint2(int3(int2(fast::clamp(_96 * SSAOCompositeUniforms.depthSize, float2(0.0), _74)), 0).xy), 0).x - SSAOCompositeUniforms.zF)) - _92)) / _113);
+        float2 _123 = in.in_var_TEXCOORD0 + (float2(-0.5, -1.5) / SSAOCompositeUniforms.aoSize);
+        float _140 = exp((-abs((SSAOCompositeUniforms.zB / (depthTex.read(uint2(int3(int2(fast::clamp(_123 * SSAOCompositeUniforms.depthSize, float2(0.0), _74)), 0).xy), 0).x - SSAOCompositeUniforms.zF)) - _92)) / _113);
+        float2 _150 = in.in_var_TEXCOORD0 + (float2(0.5, -1.5) / SSAOCompositeUniforms.aoSize);
+        float _167 = exp((-abs((SSAOCompositeUniforms.zB / (depthTex.read(uint2(int3(int2(fast::clamp(_150 * SSAOCompositeUniforms.depthSize, float2(0.0), _74)), 0).xy), 0).x - SSAOCompositeUniforms.zF)) - _92)) / _113);
+        float2 _177 = in.in_var_TEXCOORD0 + (float2(1.5, -1.5) / SSAOCompositeUniforms.aoSize);
+        float _194 = exp((-abs((SSAOCompositeUniforms.zB / (depthTex.read(uint2(int3(int2(fast::clamp(_177 * SSAOCompositeUniforms.depthSize, float2(0.0), _74)), 0).xy), 0).x - SSAOCompositeUniforms.zF)) - _92)) / _113);
+        float2 _204 = in.in_var_TEXCOORD0 + (float2(-1.5, -0.5) / SSAOCompositeUniforms.aoSize);
+        float _221 = exp((-abs((SSAOCompositeUniforms.zB / (depthTex.read(uint2(int3(int2(fast::clamp(_204 * SSAOCompositeUniforms.depthSize, float2(0.0), _74)), 0).xy), 0).x - SSAOCompositeUniforms.zF)) - _92)) / _113);
+        float2 _231 = in.in_var_TEXCOORD0 + (float2(-0.5) / SSAOCompositeUniforms.aoSize);
+        float _248 = exp((-abs((SSAOCompositeUniforms.zB / (depthTex.read(uint2(int3(int2(fast::clamp(_231 * SSAOCompositeUniforms.depthSize, float2(0.0), _74)), 0).xy), 0).x - SSAOCompositeUniforms.zF)) - _92)) / _113);
+        float2 _258 = in.in_var_TEXCOORD0 + (float2(0.5, -0.5) / SSAOCompositeUniforms.aoSize);
+        float _275 = exp((-abs((SSAOCompositeUniforms.zB / (depthTex.read(uint2(int3(int2(fast::clamp(_258 * SSAOCompositeUniforms.depthSize, float2(0.0), _74)), 0).xy), 0).x - SSAOCompositeUniforms.zF)) - _92)) / _113);
+        float2 _285 = in.in_var_TEXCOORD0 + (float2(1.5, -0.5) / SSAOCompositeUniforms.aoSize);
+        float _302 = exp((-abs((SSAOCompositeUniforms.zB / (depthTex.read(uint2(int3(int2(fast::clamp(_285 * SSAOCompositeUniforms.depthSize, float2(0.0), _74)), 0).xy), 0).x - SSAOCompositeUniforms.zF)) - _92)) / _113);
+        float2 _312 = in.in_var_TEXCOORD0 + (float2(-1.5, 0.5) / SSAOCompositeUniforms.aoSize);
+        float _329 = exp((-abs((SSAOCompositeUniforms.zB / (depthTex.read(uint2(int3(int2(fast::clamp(_312 * SSAOCompositeUniforms.depthSize, float2(0.0), _74)), 0).xy), 0).x - SSAOCompositeUniforms.zF)) - _92)) / _113);
+        float2 _339 = in.in_var_TEXCOORD0 + (float2(-0.5, 0.5) / SSAOCompositeUniforms.aoSize);
+        float _356 = exp((-abs((SSAOCompositeUniforms.zB / (depthTex.read(uint2(int3(int2(fast::clamp(_339 * SSAOCompositeUniforms.depthSize, float2(0.0), _74)), 0).xy), 0).x - SSAOCompositeUniforms.zF)) - _92)) / _113);
+        float2 _366 = in.in_var_TEXCOORD0 + (float2(0.5) / SSAOCompositeUniforms.aoSize);
+        float _383 = exp((-abs((SSAOCompositeUniforms.zB / (depthTex.read(uint2(int3(int2(fast::clamp(_366 * SSAOCompositeUniforms.depthSize, float2(0.0), _74)), 0).xy), 0).x - SSAOCompositeUniforms.zF)) - _92)) / _113);
+        float2 _393 = in.in_var_TEXCOORD0 + (float2(1.5, 0.5) / SSAOCompositeUniforms.aoSize);
+        float _410 = exp((-abs((SSAOCompositeUniforms.zB / (depthTex.read(uint2(int3(int2(fast::clamp(_393 * SSAOCompositeUniforms.depthSize, float2(0.0), _74)), 0).xy), 0).x - SSAOCompositeUniforms.zF)) - _92)) / _113);
+        float _417 = (((((((((((aoTex.sample(aoSampler, _96, level(0.0)).x * _115) + (aoTex.sample(aoSampler, _123, level(0.0)).x * _140)) + (aoTex.sample(aoSampler, _150, level(0.0)).x * _167)) + (aoTex.sample(aoSampler, _177, level(0.0)).x * _194)) + (aoTex.sample(aoSampler, _204, level(0.0)).x * _221)) + (aoTex.sample(aoSampler, _231, level(0.0)).x * _248)) + (aoTex.sample(aoSampler, _258, level(0.0)).x * _275)) + (aoTex.sample(aoSampler, _285, level(0.0)).x * _302)) + (aoTex.sample(aoSampler, _312, level(0.0)).x * _329)) + (aoTex.sample(aoSampler, _339, level(0.0)).x * _356)) + (aoTex.sample(aoSampler, _366, level(0.0)).x * _383)) + (aoTex.sample(aoSampler, _393, level(0.0)).x * _410);
+        float2 _420 = in.in_var_TEXCOORD0 + (float2(-1.5, 1.5) / SSAOCompositeUniforms.aoSize);
+        float _437 = exp((-abs((SSAOCompositeUniforms.zB / (depthTex.read(uint2(int3(int2(fast::clamp(_420 * SSAOCompositeUniforms.depthSize, float2(0.0), _74)), 0).xy), 0).x - SSAOCompositeUniforms.zF)) - _92)) / _113);
+        float2 _447 = in.in_var_TEXCOORD0 + (float2(-0.5, 1.5) / SSAOCompositeUniforms.aoSize);
+        float _464 = exp((-abs((SSAOCompositeUniforms.zB / (depthTex.read(uint2(int3(int2(fast::clamp(_447 * SSAOCompositeUniforms.depthSize, float2(0.0), _74)), 0).xy), 0).x - SSAOCompositeUniforms.zF)) - _92)) / _113);
+        float2 _474 = in.in_var_TEXCOORD0 + (float2(0.5, 1.5) / SSAOCompositeUniforms.aoSize);
+        float _491 = exp((-abs((SSAOCompositeUniforms.zB / (depthTex.read(uint2(int3(int2(fast::clamp(_474 * SSAOCompositeUniforms.depthSize, float2(0.0), _74)), 0).xy), 0).x - SSAOCompositeUniforms.zF)) - _92)) / _113);
+        float2 _501 = in.in_var_TEXCOORD0 + (float2(1.5) / SSAOCompositeUniforms.aoSize);
+        float _518 = exp((-abs((SSAOCompositeUniforms.zB / (depthTex.read(uint2(int3(int2(fast::clamp(_501 * SSAOCompositeUniforms.depthSize, float2(0.0), _74)), 0).xy), 0).x - SSAOCompositeUniforms.zF)) - _92)) / _113);
+        float _532 = precise::max(0.0, _92 - SSAOCompositeUniforms.fogStart);
+        float _543 = 1.0 - mix(((((_417 + (aoTex.sample(aoSampler, _420, level(0.0)).x * _437)) + (aoTex.sample(aoSampler, _447, level(0.0)).x * _464)) + (aoTex.sample(aoSampler, _474, level(0.0)).x * _491)) + (aoTex.sample(aoSampler, _501, level(0.0)).x * _518)) / precise::max(((((((((((((((_115 + _140) + _167) + _194) + _221) + _248) + _275) + _302) + _329) + _356) + _383) + _410) + _437) + _464) + _491) + _518, 9.9999997473787516355514526367188e-05), 1.0, fast::clamp(1.0 - exp((((-SSAOCompositeUniforms.fogDensity) * SSAOCompositeUniforms.fogDensity) * _532) * _532), 0.0, 1.0));
+        float _548 = fast::clamp(1.0 - (_543 * SSAOCompositeUniforms.strength), 0.0, 1.0);
+        _550 = float4(_548, _548, _548, 1.0);
         break;
     } while(false);
-    out.out_var_SV_Target = _342;
+    out.out_var_SV_Target = _550;
     return out;
 }
 

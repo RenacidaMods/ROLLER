@@ -412,6 +412,7 @@ struct SceneRendererGPU {
     bool  ssaoEnabled;     /* ambient occlusion (ssao.c); main view, non-MSAA only */
     float ssaoRadius;      /* AO sample radius in world units */
     float ssaoStrength;    /* AO darkening strength; 1.0 = as computed */
+    bool  ssaoShowOnly;    /* debug: show the AO term instead of the scene */
     SSAOPass *ssao;        /* created on first use */
     bool  ssaoCreateFailed; /* don't retry (and re-log) every frame */
     float brightness;      /* additive brightness offset; 0.0 = neutral */
@@ -3496,7 +3497,8 @@ static bool scene_render_gpu_end_frame_internal(SceneRendererGPU *r,
                     .fadeStart  = 13000.0f,   /* ~10 car lengths */
                     .fadeEnd    = 40000.0f,   /* ~30 car lengths */
                     .fogDensity = r->fogDensity,
-                    .fogStart   = r->fogStart
+                    .fogStart   = r->fogStart,
+                    .showOnly   = r->ssaoShowOnly
                 };
                 scene_view_projection(r, &ssaoParams.fovX, &ssaoParams.fovY, &ssaoParams.shiftY);
                 ssao_apply(r->ssao, r->cmdBuf, r->signDepthCopyTex, resolveTarget,
@@ -4028,6 +4030,12 @@ void scene_render_gpu_set_ambient_occlusion(SceneRendererGPU *r, bool enabled,
     r->ssaoEnabled  = enabled;
     r->ssaoRadius   = (radius > 1.0f) ? radius : 1.0f;
     r->ssaoStrength = (strength >= 0.0f) ? strength : 0.0f;
+}
+
+void scene_render_gpu_set_ambient_occlusion_view(SceneRendererGPU *r, bool showOnly)
+{
+    if (!r) return;
+    r->ssaoShowOnly = showOnly;
 }
 
 void scene_render_gpu_set_brightness(SceneRendererGPU *r, float brightness)

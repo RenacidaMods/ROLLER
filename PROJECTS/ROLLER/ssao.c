@@ -5,8 +5,9 @@
 /* Two full-screen passes:
  *   1. ssao_ao_pixel: half-resolution occlusion term into an R8 target,
  *      rebuilt from the depth snapshot (no normals or positions needed).
- *   2. ssao_composite_pixel: depth-aware 3x3 upsample, faded with distance
- *      and fog, multiplied into the scene colour (dst = src * dst).
+ *   2. ssao_composite_pixel: depth-aware 4x4 upsample, faded with distance
+ *      and fog, multiplied into the scene colour (dst = src * dst), or for
+ *      the "AO only" debug view written over it.
  * Both reuse the full-screen triangle from crt_vertex.hlsl. */
 
 /* Matches cbuffer SSAOUniforms in ssao_ao_pixel.hlsl */
@@ -35,7 +36,8 @@ typedef struct {
 struct SSAOPass {
     SDL_GPUDevice           *device;
     SDL_GPUGraphicsPipeline *aoPipeline;
-    SDL_GPUGraphicsPipeline *compositePipeline;
+    SDL_GPUGraphicsPipeline *compositePipeline;     /* multiply into the scene */
+    SDL_GPUGraphicsPipeline *showOnlyPipeline;      /* debug: overwrite with the AO term */
     SDL_GPUSampler          *nearestSampler;
     SDL_GPUSampler          *linearSampler;
     SDL_GPUTexture          *aoTex;
@@ -111,6 +113,7 @@ SSAOPass *ssao_create(SDL_GPUDevice *device, SDL_GPUTextureFormat colorFormat)
     if (vert && ao && comp) {
         p->aoPipeline        = make_pipeline(device, vert, ao,   SDL_GPU_TEXTUREFORMAT_R8_UNORM, false);
         p->compositePipeline = make_pipeline(device, vert, comp, colorFormat, true);
+        p->showOnlyPipeline  = make_pipeline(device, vert, comp, colorFormat, false);
     }
     if (vert) SDL_ReleaseGPUShader(device, vert);
     if (ao)   SDL_ReleaseGPUShader(device, ao);
@@ -129,7 +132,8 @@ SSAOPass *ssao_create(SDL_GPUDevice *device, SDL_GPUTextureFormat colorFormat)
     si.mag_filter = SDL_GPU_FILTER_LINEAR;
     p->linearSampler = SDL_CreateGPUSampler(device, &si);
 
-    if (!p->aoPipeline || !p->compositePipeline || !p->nearestSampler || !p->linearSampler) {
+    if (!p->aoPipeline || !p->compositePipeline || !p->showOnlyPipeline
+            || !p->nearestSampler || !p->linearSampler) {
         SDL_Log("ssao: failed to create shaders/pipelines/samplers: %s", SDL_GetError());
         ssao_destroy(p);
         return NULL;
@@ -145,6 +149,7 @@ void ssao_destroy(SSAOPass *p)
     if (p->linearSampler)     SDL_ReleaseGPUSampler(p->device, p->linearSampler);
     if (p->aoPipeline)        SDL_ReleaseGPUGraphicsPipeline(p->device, p->aoPipeline);
     if (p->compositePipeline) SDL_ReleaseGPUGraphicsPipeline(p->device, p->compositePipeline);
+    if (p->showOnlyPipeline)  SDL_ReleaseGPUGraphicsPipeline(p->device, p->showOnlyPipeline);
     free(p);
 }
 
@@ -211,7 +216,7 @@ void ssao_apply(SSAOPass *p, SDL_GPUCommandBuffer *cmd,
     };
     rp = SDL_BeginGPURenderPass(cmd, &colorTarget, 1, NULL);
     if (!rp) return;
-    SDL_BindGPUGraphicsPipeline(rp, p->compositePipeline);
+    SDL_BindGPUGraphicsPipeline(rp, params->showOnly ? p->showOnlyPipeline : p->compositePipeline);
     SDL_GPUTextureSamplerBinding bindings[2] = {
         { p->aoTex, p->linearSampler },
         { depthTex, p->nearestSampler }

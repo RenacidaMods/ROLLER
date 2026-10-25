@@ -1,7 +1,9 @@
 // Screen-space ambient occlusion, pass 2 of 2 (ssao.c): upsamples the
-// half-resolution occlusion with a depth-aware 3x3 blur and outputs a
-// grey level that the pipeline multiplies into the scene colour
-// (dst = src * dst), so 1.0 leaves a pixel untouched.
+// half-resolution occlusion with a depth-aware 4x4 blur (matching the
+// 4x4 rotation pattern in ssao_ao_pixel.hlsl, so its noise cancels) and
+// outputs a grey level. The normal pipeline multiplies it into the scene
+// colour (dst = src * dst), so 1.0 leaves a pixel untouched; the "AO only"
+// debug pipeline writes it directly.
 
 Texture2D<float> aoTex        : register(t0, space2);
 SamplerState     aoSampler    : register(s0, space2);
@@ -46,13 +48,12 @@ float4 main(PixelInput input) : SV_Target
     float sum = 0.0;
     float weightSum = 0.0;
     [unroll]
-    for (int y = -1; y <= 1; y++) {
+    for (int y = 0; y < 4; y++) {
         [unroll]
-        for (int x = -1; x <= 1; x++) {
-            float2 tapUV = uv + float2(x, y) * aoTexel;
+        for (int x = 0; x < 4; x++) {
+            float2 tapUV = uv + (float2(x, y) - 1.5) * aoTexel;
             float tapZ = viewZ(loadDepth(tapUV));
-            float w = ((x == 0 && y == 0) ? 2.0 : 1.0)
-                    * exp(-abs(tapZ - zc) / max(zc * 0.03, 1.0));
+            float w = exp(-abs(tapZ - zc) / max(zc * 0.03, 1.0));
             sum += aoTex.SampleLevel(aoSampler, tapUV, 0) * w;
             weightSum += w;
         }

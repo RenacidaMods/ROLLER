@@ -1233,6 +1233,10 @@ void game_render_set_ambient_occlusion(GameRenderer *renderer, bool enabled,
     if (renderer) scene_render_gpu_set_ambient_occlusion(renderer->gpu, enabled, radius, strength);
 }
 
+void game_render_set_ambient_occlusion_view(GameRenderer *renderer, bool showOnly) {
+    if (renderer) scene_render_gpu_set_ambient_occlusion_view(renderer->gpu, showOnly);
+}
+
 void game_render_set_fov_multiplier(GameRenderer *renderer, float mult) {
     if (renderer) scene_render_gpu_set_fov_multiplier(renderer->gpu, mult);
 }
@@ -1306,6 +1310,9 @@ void game_render_set_vignette(GameRenderer *renderer, float strength) {
 void game_render_set_ambient_occlusion(GameRenderer *renderer, bool enabled,
                                        float radius, float strength) {
     (void)renderer; (void)enabled; (void)radius; (void)strength;
+}
+void game_render_set_ambient_occlusion_view(GameRenderer *renderer, bool showOnly) {
+    (void)renderer; (void)showOnly;
 }
 void game_render_set_fov_multiplier(GameRenderer *renderer, float mult) {
     (void)renderer; (void)mult;

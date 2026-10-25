@@ -142,6 +142,8 @@ void scene_render_gpu_set_vignette(SceneRendererGPU *r, float strength);
  * world units (a car is ~1300 long); strength 1.0 = as computed. */
 void scene_render_gpu_set_ambient_occlusion(SceneRendererGPU *r, bool enabled,
                                             float radius, float strength);
+/* Debug: while AO is on, show the AO term itself (greyscale) instead of the scene. */
+void scene_render_gpu_set_ambient_occlusion_view(SceneRendererGPU *r, bool showOnly);
 
 /* brightness: additive offset; 0.0 = neutral, positive = brighter, negative = darker */
 void scene_render_gpu_set_brightness(SceneRendererGPU *r, float brightness);
