@@ -2247,7 +2247,11 @@ void UpdateSDL()
           s_targetFrameNs = ullTickFrameNs;
           s_nextFrameNs = 0;
         }
-      } else if (s_targetFrameNs == 0) {
+      } else {
+        /* Re-read every frame (cheap) rather than once: the refresh rate can
+         * change after the first frame, e.g. moving to another monitor or a
+         * full-screen mode switch, and a stale value locked the game to it
+         * (seen as a steady 90 fps on a 120 Hz screen with the GPU idle). */
         float fRefreshHz = 60.0f;
         if (s_pWindow) {
           SDL_DisplayID uiDisplay = SDL_GetDisplayForWindow(s_pWindow);
@@ -2255,7 +2259,12 @@ void UpdateSDL()
           if (pMode && pMode->refresh_rate > 0.0f)
             fRefreshHz = pMode->refresh_rate;
         }
-        s_targetFrameNs = (uint64)(1e9 / (double)fRefreshHz);
+        uint64 ullRefreshFrameNs = (uint64)(1e9 / (double)fRefreshHz);
+        if (s_targetFrameNs != ullRefreshFrameNs) {
+          SDL_Log("Frame pacing: %.2f Hz", fRefreshHz);
+          s_targetFrameNs = ullRefreshFrameNs;
+          s_nextFrameNs = 0;
+        }
       }
 
       uint64 now = SDL_GetTicksNS();
