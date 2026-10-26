@@ -50,7 +50,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from PIL import Image
+from PIL import Image, ImageChops
 
 TILE = 64
 LAYOUT_VERSION = 1
@@ -221,9 +221,18 @@ def cut(layout_path: Path, upscaled_path: Path, out_root: Path | None,
         y = (index // layout["cols"]) * row_pitch
         tile = sheet.crop((x, y, x + tile_px, y + tile_px))
         r, g, b, a = tile.split()
+        original = Image.open(source / f"{index:03d}.png").convert("RGBA")
+        original_a = original.getchannel("A").resize((tile_px, tile_px), Image.NEAREST)
         if alpha_mode == "original":
-            original = Image.open(source / f"{index:03d}.png").convert("RGBA")
-            a = original.getchannel("A").resize((tile_px, tile_px), Image.NEAREST)
+            a = original_a
+        else:
+            # The upscaler can leave stray solid pixels on a tile's outer edge
+            # where the original is see-through (cloud tiles drew a dashed
+            # line down the edge of the quad). Along a band one original
+            # pixel wide, keep the original's see-through pixels clear.
+            band = Image.new("L", (tile_px, tile_px), 255)
+            band.paste(0, (scale, scale, tile_px - scale, tile_px - scale))
+            a.paste(ImageChops.darker(a, original_a), mask=band)
         a = a.point(lambda v: 255 if v >= 128 else 0)
         Image.merge("RGBA", (r, g, b, a)).save(out_dir / f"{index:03d}.png")
         written += 1
