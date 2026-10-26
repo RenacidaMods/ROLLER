@@ -70,6 +70,25 @@ float2 projectUV(float3 p)
     return float2(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
 }
 
+// One tangent step along off (one texel), for the face normal. Takes the
+// side with the smaller depth step so silhouettes don't produce bogus
+// normals, then, where the surface carries on smoothly, measures over three
+// texels instead: far away the depth buffer only resolves z to a few units,
+// and on a wall receding sideways those steps showed as vertical AO stripes
+// that followed the camera. Over three texels they matter a third as much.
+float3 tangentStep(float2 uv, float2 off, float3 P)
+{
+    float3 a1 = viewPos(uv + off, loadDepth(uv + off));
+    float3 b1 = viewPos(uv - off, loadDepth(uv - off));
+    bool useA = abs(a1.z - P.z) < abs(P.z - b1.z);
+    float3 one = useA ? (a1 - P) : (P - b1);
+    float2 off3 = useA ? off * 3.0 : -off * 3.0;
+    float3 p3 = viewPos(uv + off3, loadDepth(uv + off3));
+    float3 three = useA ? (p3 - P) : (P - p3);
+    bool sameSurface = abs(three.z - 3.0 * one.z) < max(abs(one.z) * 1.5, P.z * 0.002);
+    return sameSurface ? three / 3.0 : one;
+}
+
 float4 main(PixelInput input) : SV_Target
 {
     float2 uv = input.uv;
@@ -79,15 +98,10 @@ float4 main(PixelInput input) : SV_Target
 
     float3 P = viewPos(uv, d);
 
-    // Face normal from neighbouring depths, taking the side with the smaller
-    // depth step on each axis so silhouettes don't produce bogus normals.
+    // Face normal from neighbouring depths (see tangentStep).
     float2 texel = 1.0 / depthSize;
-    float3 Pr = viewPos(uv + float2(texel.x, 0.0), loadDepth(uv + float2(texel.x, 0.0)));
-    float3 Pl = viewPos(uv - float2(texel.x, 0.0), loadDepth(uv - float2(texel.x, 0.0)));
-    float3 Pd = viewPos(uv + float2(0.0, texel.y), loadDepth(uv + float2(0.0, texel.y)));
-    float3 Pu = viewPos(uv - float2(0.0, texel.y), loadDepth(uv - float2(0.0, texel.y)));
-    float3 dx = (abs(Pr.z - P.z) < abs(P.z - Pl.z)) ? (Pr - P) : (P - Pl);
-    float3 dy = (abs(Pd.z - P.z) < abs(P.z - Pu.z)) ? (Pd - P) : (P - Pu);
+    float3 dx = tangentStep(uv, float2(texel.x, 0.0), P);
+    float3 dy = tangentStep(uv, float2(0.0, texel.y), P);
     float3 N = normalize(cross(dx, dy));
     if (dot(N, -P) < 0.0)
         N = -N;
