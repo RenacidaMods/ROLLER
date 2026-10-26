@@ -139,6 +139,7 @@ struct MenuRendererGPU {
     Uint32 depthWidth;
     Uint32 depthHeight;
     SDL_GPUTexture *whiteTexture;
+    SDL_GPUTexture *softShadowTex;   // soft contact shadow under menu cars
 
     // 3D mesh state
     MeshPreview carMesh;
@@ -676,6 +677,35 @@ MenuRendererGPU *menu_render_gpu_create(SDL_GPUDevice *device, SDL_Window *windo
     uint8 whitePixel[4] = {255, 255, 255, 255};
     r->whiteTexture = scene_render_gpu_upload_rgba(device, whitePixel, 1, 1, false);
 
+    // Soft contact shadow for the car-select and winner-screen cars: white
+    // with alpha from a rounded rectangle, darkest under the car and fading
+    // to nothing at the quad's edges (the quad reaches 15% past the car's
+    // footprint, see menu_render_gpu_load_car_mesh). Drawn tinted black.
+    {
+        enum { N = 128 };
+        uint8 *px = malloc(N * N * 4);
+        if (px) {
+            const float hx = 0.77f, hz = 0.80f, rr = 0.3f;
+            for (int y = 0; y < N; y++) {
+                for (int x = 0; x < N; x++) {
+                    float pxv = ((float)x + 0.5f) / N * 2.0f - 1.0f;
+                    float pyv = ((float)y + 0.5f) / N * 2.0f - 1.0f;
+                    float qx = fabsf(pxv) - (hx - rr), qy = fabsf(pyv) - (hz - rr);
+                    float ox = qx > 0.0f ? qx : 0.0f, oy = qy > 0.0f ? qy : 0.0f;
+                    float sdf = sqrtf(ox * ox + oy * oy) + fminf(fmaxf(qx, qy), 0.0f) - rr;
+                    float t = (sdf + 0.35f) / 0.57f;            // 0 inside the core .. 1 at the quad edge
+                    t = t < 0.0f ? 0.0f : t > 1.0f ? 1.0f : t;
+                    float a = 0.65f * (1.0f - t * t * (3.0f - 2.0f * t));
+                    uint8 *o = px + (y * N + x) * 4;
+                    o[0] = o[1] = o[2] = 255;
+                    o[3] = (uint8)(a * 255.0f + 0.5f);
+                }
+            }
+            r->softShadowTex = scene_render_gpu_upload_rgba(device, px, N, N, true);
+            free(px);
+        }
+    }
+
     r->loadedCarIdx = -1;
     r->iLoadedTrackGen = -1;
 
@@ -691,6 +721,7 @@ void menu_render_gpu_destroy(MenuRendererGPU *r)
     FreeMeshPreview(r->device, &r->carMesh, r->whiteTexture);
     FreeMeshPreview(r->device, &r->trackMesh, r->whiteTexture);
     if (r->whiteTexture) SDL_ReleaseGPUTexture(r->device, r->whiteTexture);
+    if (r->softShadowTex) SDL_ReleaseGPUTexture(r->device, r->softShadowTex);
     if (r->depthTexture) SDL_ReleaseGPUTexture(r->device, r->depthTexture);
     if (r->meshPipeline) SDL_ReleaseGPUGraphicsPipeline(r->device, r->meshPipeline);
     if (r->meshPipelineTrackShadow) SDL_ReleaseGPUGraphicsPipeline(r->device, r->meshPipelineTrackShadow);
@@ -1524,26 +1555,29 @@ void menu_render_gpu_load_car_mesh(MenuRendererGPU *r, int carIdx, const tColor 
             if (gx < minZ) minZ = gx;
             if (gx > maxZ) maxZ = gx;
         }
-        // Place shadow at the bottom of the car
+        // Place shadow at the bottom of the car, reaching 15% past its
+        // footprint so the soft texture (softShadowTex) can fade out.
         float shadowY = minY;
+        float padX = (maxX - minX) * 0.15f, padZ = (maxZ - minZ) * 0.15f;
         float shadowCorners[4][3] = {
-            { minX, shadowY, minZ },
-            { minX, shadowY, maxZ },
-            { maxX, shadowY, maxZ },
-            { maxX, shadowY, minZ },
+            { minX - padX, shadowY, minZ - padZ },
+            { minX - padX, shadowY, maxZ + padZ },
+            { maxX + padX, shadowY, maxZ + padZ },
+            { maxX + padX, shadowY, minZ - padZ },
         };
+        static const float shadowUV[4][2] = { {0, 0}, {0, 1}, {1, 1}, {1, 0} };
         int shadowBase = vertCount;
         for (int v = 0; v < 4; v++) {
             MeshVertex *mv = &vertices[vertCount++];
             mv->position[0] = shadowCorners[v][0];
             mv->position[1] = shadowCorners[v][1];
             mv->position[2] = shadowCorners[v][2];
-            mv->uv[0] = whiteU;
-            mv->uv[1] = whiteV;
+            mv->uv[0] = shadowUV[v][0];
+            mv->uv[1] = shadowUV[v][1];
             mv->color[0] = 0.0f;
             mv->color[1] = 0.0f;
             mv->color[2] = 0.0f;
-            mv->color[3] = 0.5f;
+            mv->color[3] = 1.0f;
         }
         // CCW winding when viewed from above (+Y)
         indices[idxCount++] = shadowBase + 0;
@@ -1649,10 +1683,9 @@ void menu_render_gpu_draw_car_preview(MenuRendererGPU *r, float angle, float dis
             cmd->shineVS[8 + rr] = model[rr * 4 + 0];   // X axis: R^T * (1, 0, 0)
         }
     }
-    // The shadow quad is the mesh's last 6 indices; the shadows option
-    // (TEX_OFF_SHADOWS) hides it, as it hides car shadows in races.
-    cmd->indexCount = r->carMesh.indexCount
-                    - (((textures_off & TEX_OFF_SHADOWS) && r->carMesh.indexCount > 6) ? 6 : 0);
+    // The shadow quad is the mesh's last 6 indices: drawn below as its own
+    // command with the soft shadow texture.
+    cmd->indexCount = r->carMesh.indexCount > 6 ? r->carMesh.indexCount - 6 : r->carMesh.indexCount;
     cmd->iFirstIndex = 0;
     memcpy(cmd->mvp, mvp, sizeof(mvp));
     cmd->vpX = (float)(destX - padLeft);
@@ -1660,6 +1693,16 @@ void menu_render_gpu_draw_car_preview(MenuRendererGPU *r, float angle, float dis
     cmd->vpW = (float)totalW;
     cmd->vpH = (float)totalH;
     cmd->ePipeline = MESH_PIPELINE_CAR;
+
+    if (r->softShadowTex && r->carMesh.indexCount > 6 && r->meshDrawCount < MAX_MESH_DRAWS) {
+        MeshDrawCommand *sh = &r->meshDraws[r->meshDrawCount++];
+        *sh = *cmd;
+        sh->texture = r->softShadowTex;
+        sh->smooth = true;
+        sh->shine = false;
+        sh->iFirstIndex = r->carMesh.indexCount - 6;
+        sh->indexCount = 6;
+    }
 }
 
 //---------------------------------------------------------------------------
