@@ -33,6 +33,9 @@ void menu_render_gpu_set_layer(MenuRendererGPU *renderer, MenuDrawLayer layer);
 
 // Draw calls (between begin_frame / end_frame)
 void menu_render_gpu_background(MenuRendererGPU *renderer, int slot);
+// Replace slot's background with an HD image file (any size, drawn filtered
+// over the full screen). Returns 1 if loaded, 0 if absent or unreadable.
+int menu_render_gpu_replace_background(MenuRendererGPU *renderer, int slot, const char *path);
 void menu_render_gpu_sprite(MenuRendererGPU *renderer, int slot, int blockIdx,
                         int x, int y, int transparentColorIndex,
                         const tColor *palette);

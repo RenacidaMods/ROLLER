@@ -2,6 +2,7 @@
 #include "menu_render_gpu.h"
 #include "menu_render_software.h"
 #include "3d.h"
+#include "roller.h"   /* g_bHDTextures */
 #include "sound.h"
 #include "phone_ui.h"
 #include "touch_ui.h"
@@ -215,6 +216,18 @@ void menu_render_set_layer(MenuRenderer *renderer, MenuDrawLayer layer) {
         menu_render_gpu_set_layer(renderer->gpu, layer);
 #else
     (void)layer;
+#endif
+}
+
+void menu_render_set_hd_background(MenuRenderer *renderer, int slot, const char *name) {
+#if !defined(IS_WASM)
+    if (!renderer || !renderer->gpu || !name || !g_bHDTextures) return;
+    if (menu_render_effective_mode(renderer) != MENU_RENDER_GPU) return;
+    char path[256];
+    SDL_snprintf(path, sizeof(path), "../hd_textures/menu/%s.png", name);
+    menu_render_gpu_replace_background(renderer->gpu, slot, path);
+#else
+    (void)renderer; (void)slot; (void)name;
 #endif
 }
 

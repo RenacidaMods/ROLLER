@@ -368,6 +368,7 @@ void WinnerScreenEnter(int carDesign, char byFlags)
     if (bWinnerScreenGpu) {
       memcpy(pal_addr, palette, 256 * sizeof(tColor));
       menu_render_load_blocks(mr, 0, front_vga[0], palette);
+      menu_render_set_hd_background(mr, 0, "winner");
       menu_render_load_blocks(mr, 1, front_vga[1], palette);
       menu_render_free_car_mesh(mr);   // rebuilt from this screen's car texture
     }

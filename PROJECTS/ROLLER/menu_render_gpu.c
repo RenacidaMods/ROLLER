@@ -9,6 +9,8 @@
 #include "debug_overlay.h"
 #include "scene_render_gpu.h" /* scene_render_gpu_upload_rgba/_buffer */
 #include "game_render_hardware.h" /* game_render_hw_build_car_atlas */
+#include "game_scene_shaders.h"    /* game_car_* -- car shine on menu cars */
+#include <SDL3_image/SDL_image.h>  /* IMG_Load -- HD menu backgrounds */
 #include <string.h>
 #include <stdlib.h>
 #include <math.h>
@@ -40,6 +42,7 @@ typedef struct {
     int vertexCount;
     MenuDrawLayer layer;
     PixelUniforms uniforms;
+    bool smooth;       // HD background: filtered, not nearest
 } DrawCommand;
 
 #define MAX_DRAW_COMMANDS 512
@@ -78,6 +81,8 @@ typedef struct {
     float vpX, vpY, vpW, vpH; // viewport in virtual 640x400 coords
     eMeshPipeline ePipeline;
     bool smooth;
+    bool shine;               // car: draw with meshPipelineCarShine when Car shine is on
+    float shineVS[12];        // its camera position, up and X axis in the car's own coordinates
 } MeshDrawCommand;
 
 #define MAX_MESH_DRAWS 4
@@ -124,6 +129,9 @@ struct MenuRendererGPU {
     SDL_GPUGraphicsPipeline *meshPipeline;
     SDL_GPUGraphicsPipeline *meshPipelineTrackShadow;
     SDL_GPUGraphicsPipeline *meshPipelineTrack;
+    // The race car shaders (game_car_*), so menu cars get the same car shine.
+    SDL_GPUGraphicsPipeline *meshPipelineCarShine;
+    bool backgroundHD[MAX_SLOTS];   // backgroundTextures[slot] is an HD replacement
     SDL_GPUTexture *depthTexture;
     Uint32 depthWidth;
     Uint32 depthHeight;
@@ -244,6 +252,7 @@ static void RecordDraw(MenuRendererGPU *r, SDL_GPUTexture *texture,
     cmd->vertexOffset = r->vertexCount - 6; // last EmitQuad wrote 6 verts
     cmd->vertexCount = 6;
     cmd->layer = r->currentLayer;
+    cmd->smooth = false;
     memset(&cmd->uniforms, 0, sizeof(cmd->uniforms));
     cmd->uniforms.alphaMul = alphaMul;
 
@@ -342,7 +351,8 @@ static void ReplayDrawsLayer(MenuRendererGPU *r, SDL_GPURenderPass *renderPass,
 
         SDL_PushGPUFragmentUniformData(r->cmdBuf, 0, &cmd->uniforms, sizeof(cmd->uniforms));
 
-        SDL_GPUTextureSamplerBinding tsb = { .texture = cmd->texture, .sampler = r->sampler };
+        SDL_GPUTextureSamplerBinding tsb = { .texture = cmd->texture,
+            .sampler = (cmd->smooth && r->meshSmoothSampler) ? r->meshSmoothSampler : r->sampler };
         SDL_BindGPUFragmentSamplers(renderPass, 0, &tsb, 1);
 
         SDL_DrawGPUPrimitives(renderPass, cmd->vertexCount, 1, cmd->vertexOffset, 0);
@@ -370,10 +380,13 @@ static void ReplayMeshDraws(MenuRendererGPU *r, SDL_GPURenderPass *renderPass)
     for (int i = 0; i < r->meshDrawCount; i++) {
         MeshDrawCommand *cmd = &r->meshDraws[i];
         SDL_GPUGraphicsPipeline *pWantedPipeline = r->meshPipeline;
+        bool bShine = cmd->shine && g_fCarShine > 0.0f && r->meshPipelineCarShine;
         if (cmd->ePipeline == MESH_PIPELINE_TRACK_SHADOW)
             pWantedPipeline = r->meshPipelineTrackShadow;
         else if (cmd->ePipeline == MESH_PIPELINE_TRACK)
             pWantedPipeline = r->meshPipelineTrack;
+        else if (bShine)
+            pWantedPipeline = r->meshPipelineCarShine;
         if (pWantedPipeline != curPipeline) {
             SDL_BindGPUGraphicsPipeline(renderPass, pWantedPipeline);
             curPipeline = pWantedPipeline;
@@ -389,7 +402,24 @@ static void ReplayMeshDraws(MenuRendererGPU *r, SDL_GPURenderPass *renderPass)
         mvp.max_depth = 1.0f;
         SDL_SetGPUViewport(renderPass, &mvp);
 
-        SDL_PushGPUVertexUniformData(r->cmdBuf, 0, cmd->mvp, sizeof(cmd->mvp));
+        if (bShine) {
+            // game_car_vertex/pixel uniforms: MVP + shine inputs, then the
+            // scene pixel block with neutral fog/gamma/colour settings.
+            struct { float mvp[16]; float shine[12]; } vu;
+            memcpy(vu.mvp, cmd->mvp, sizeof(vu.mvp));
+            memcpy(vu.shine, cmd->shineVS, sizeof(vu.shine));
+            SDL_PushGPUVertexUniformData(r->cmdBuf, 0, &vu, sizeof(vu));
+            struct {
+                float fogDensity, gamma, fogStart, saturation;
+                float fogColor[4];
+                float contrast, brightness;
+                float carShine, carGlint, carDark, _pad[3];
+            } pu = { 0.0f, 1.0f, 0.0f, 1.0f, {0.7f, 0.75f, 0.8f, 1.0f}, 1.0f, 0.0f,
+                     g_fCarShine, g_fCarShineGlint, g_fCarShineDark, {0} };
+            SDL_PushGPUFragmentUniformData(r->cmdBuf, 0, &pu, sizeof(pu));
+        } else {
+            SDL_PushGPUVertexUniformData(r->cmdBuf, 0, cmd->mvp, sizeof(cmd->mvp));
+        }
 
         SDL_GPUSampler *sampler = (cmd->smooth && r->meshSmoothSampler) ? r->meshSmoothSampler : r->sampler;
         SDL_GPUTextureSamplerBinding tsb = { .texture = cmd->texture, .sampler = sampler };
@@ -556,6 +586,25 @@ MenuRendererGPU *menu_render_gpu_create(SDL_GPUDevice *device, SDL_Window *windo
         if (!r->meshPipeline)
             SDL_Log("Failed to create mesh pipeline: %s", SDL_GetError());
 
+        // Same state with the race car shaders, for car shine on menu cars.
+        SDL_GPUShader *shineVert = LoadShader(device, SDL_GPU_SHADERSTAGE_VERTEX,
+            game_car_vertex_spirv, game_car_vertex_spirv_size,
+            game_car_vertex_msl, game_car_vertex_msl_size, 0, 1);
+        SDL_GPUShader *shineFrag = LoadShader(device, SDL_GPU_SHADERSTAGE_FRAGMENT,
+            game_car_pixel_spirv, game_car_pixel_spirv_size,
+            game_car_pixel_msl, game_car_pixel_msl_size, 1, 1);
+        if (shineVert && shineFrag) {
+            meshPipeInfo.vertex_shader = shineVert;
+            meshPipeInfo.fragment_shader = shineFrag;
+            r->meshPipelineCarShine = SDL_CreateGPUGraphicsPipeline(device, &meshPipeInfo);
+            if (!r->meshPipelineCarShine)
+                SDL_Log("Failed to create menu car shine pipeline: %s", SDL_GetError());
+            meshPipeInfo.vertex_shader = meshVert;
+            meshPipeInfo.fragment_shader = meshFrag;
+        }
+        if (shineVert) SDL_ReleaseGPUShader(device, shineVert);
+        if (shineFrag) SDL_ReleaseGPUShader(device, shineFrag);
+
         // Two-sided, depth-tested variant for the track map.  Depth testing is
         // required because track segments can overlap in screen space at loops.
         meshPipeInfo.rasterizer_state.cull_mode = SDL_GPU_CULLMODE_NONE;
@@ -630,6 +679,7 @@ void menu_render_gpu_destroy(MenuRendererGPU *r)
     if (r->meshPipeline) SDL_ReleaseGPUGraphicsPipeline(r->device, r->meshPipeline);
     if (r->meshPipelineTrackShadow) SDL_ReleaseGPUGraphicsPipeline(r->device, r->meshPipelineTrackShadow);
     if (r->meshPipelineTrack) SDL_ReleaseGPUGraphicsPipeline(r->device, r->meshPipelineTrack);
+    if (r->meshPipelineCarShine) SDL_ReleaseGPUGraphicsPipeline(r->device, r->meshPipelineCarShine);
     SDL_ReleaseGPUBuffer(r->device, r->vertexBuffer);
     SDL_ReleaseGPUTransferBuffer(r->device, r->vertexTransferBuffer);
     SDL_ReleaseGPUSampler(r->device, r->sampler);
@@ -775,6 +825,7 @@ int menu_render_gpu_load_blocks(MenuRendererGPU *r, int slot, tBlockHeader *bloc
         if (!rgba) return 0;
         IndexedToRGBA((uint8 *)blocks, pal, rgba, pixCount);
         r->backgroundTextures[slot] = scene_render_gpu_upload_rgba(r->device, rgba, MENU_WIDTH, MENU_HEIGHT, false);
+        r->backgroundHD[slot] = false;
         free(rgba);
         return r->backgroundTextures[slot] != NULL;
     }
@@ -827,6 +878,7 @@ void menu_render_gpu_free_blocks(MenuRendererGPU *r, int slot)
     if (r->backgroundTextures[slot]) {
         SDL_ReleaseGPUTexture(r->device, r->backgroundTextures[slot]);
         r->backgroundTextures[slot] = NULL;
+        r->backgroundHD[slot] = false;
     }
 }
 
@@ -838,7 +890,41 @@ void menu_render_gpu_background(MenuRendererGPU *r, int slot)
 {
     if (slot < 0 || slot >= MAX_SLOTS || !r->backgroundTextures[slot]) return;
     EmitQuad(r, 0, 0, MENU_WIDTH, MENU_HEIGHT, 0, 0, 1, 1);
+    int before = r->drawCommandCount;
     RecordDraw(r, r->backgroundTextures[slot], 1.0f, -1, NULL);
+    if (r->drawCommandCount > before)
+        r->drawCommands[r->drawCommandCount - 1].smooth = r->backgroundHD[slot];
+}
+
+int menu_render_gpu_replace_background(MenuRendererGPU *r, int slot, const char *path)
+{
+    if (!r || slot < 0 || slot >= MAX_SLOTS || !path) return 0;
+    SDL_PathInfo info;
+    if (!SDL_GetPathInfo(path, &info) || info.type != SDL_PATHTYPE_FILE) return 0;
+    SDL_Surface *loaded = IMG_Load(path);
+    if (!loaded) {
+        SDL_Log("HD-TEX: can't read %s: %s", path, SDL_GetError());
+        return 0;
+    }
+    SDL_Surface *rgba = SDL_ConvertSurface(loaded, SDL_PIXELFORMAT_RGBA32);
+    SDL_DestroySurface(loaded);
+    if (!rgba) return 0;
+    int w = rgba->w, h = rgba->h;
+    uint8 *px = malloc((size_t)w * h * 4);
+    if (px) {
+        for (int y = 0; y < h; y++)
+            memcpy(px + (size_t)y * w * 4, (const uint8 *)rgba->pixels + (size_t)y * rgba->pitch, (size_t)w * 4);
+    }
+    SDL_DestroySurface(rgba);
+    SDL_GPUTexture *tex = px ? scene_render_gpu_upload_rgba(r->device, px, w, h, false) : NULL;
+    free(px);
+    if (!tex) return 0;
+    if (r->backgroundTextures[slot])
+        SDL_ReleaseGPUTexture(r->device, r->backgroundTextures[slot]);
+    r->backgroundTextures[slot] = tex;
+    r->backgroundHD[slot] = true;
+    SDL_Log("HD-TEX: menu background slot %d from %s (%dx%d)", slot, path, w, h);
+    return 1;
 }
 
 void menu_render_gpu_sprite(MenuRendererGPU *r, int slot, int blockIdx, int x, int y,
@@ -1508,6 +1594,18 @@ void menu_render_gpu_draw_car_preview(MenuRendererGPU *r, float angle, float dis
     cmd->indexBuffer = r->carMesh.indexBuffer;
     cmd->texture = r->carMesh.texture;
     cmd->smooth = r->carMesh.smooth;
+    // Car shine inputs in the mesh's own (Y-up) coordinates: the model is a
+    // rotation about Y, so its inverse is the transpose (R^T(r,c) = model[r*4+c]).
+    cmd->shine = true;
+    {
+        float eye[3] = { eyeX, eyeY, eyeZ };
+        memset(cmd->shineVS, 0, sizeof(cmd->shineVS));
+        for (int rr = 0; rr < 3; rr++) {
+            cmd->shineVS[rr]     = model[rr * 4 + 0] * eye[0] + model[rr * 4 + 1] * eye[1] + model[rr * 4 + 2] * eye[2];
+            cmd->shineVS[4 + rr] = model[rr * 4 + 1];   // up: R^T * (0, 1, 0)
+            cmd->shineVS[8 + rr] = model[rr * 4 + 0];   // X axis: R^T * (1, 0, 0)
+        }
+    }
     cmd->indexCount = r->carMesh.indexCount;
     cmd->iFirstIndex = 0;
     memcpy(cmd->mvp, mvp, sizeof(mvp));
@@ -1748,6 +1846,7 @@ void menu_render_gpu_draw_track_preview(MenuRendererGPU *r, float cameraZ,
     pShadowCommand->vpH = (float)totalH;
     pShadowCommand->ePipeline = MESH_PIPELINE_TRACK_SHADOW;
     pShadowCommand->smooth = false;
+    pShadowCommand->shine = false;
 
     MeshDrawCommand *pTrackCommand = &r->meshDraws[r->meshDrawCount++];
     *pTrackCommand = *pShadowCommand;

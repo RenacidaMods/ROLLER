@@ -28,6 +28,9 @@ MenuRenderMode menu_render_get_mode(MenuRenderer *renderer);
 MenuRenderMode menu_render_get_pending_mode(MenuRenderer *renderer);
 
 // Asset conversion
+// GPU menus with HD Textures on: replace the background just loaded into
+// slot with ../hd_textures/menu/<name>.png when it exists.
+void menu_render_set_hd_background(MenuRenderer *renderer, int slot, const char *name);
 int menu_render_load_blocks(MenuRenderer *renderer, int slot,
                             tBlockHeader *blocks, const tColor *palette);
 
