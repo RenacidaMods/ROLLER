@@ -39,4 +39,13 @@ void game_render_hw_reset_name_tags(void);
 /* Draw FPS counter into scrbuf at the corner specified by g_iFpsDisplay (1-4; 0=off). */
 void game_render_hw_draw_fps_overlay(void);
 
+/* RGBA texture sheet for car carIdx's 3D model (tiles 4 per row plus a white
+ * strip), using HD tiles from ../hd_textures when HD Textures is on. Shared
+ * by the race renderer and the car-select screen. *outAtlasH is the layout
+ * height in 64-pixel units (numRows * 64 + 1) for UV maths, whatever the
+ * texture's real size. NULL if the car has no texture data. */
+SDL_GPUTexture *game_render_hw_build_car_atlas(SDL_GPUDevice *dev, int carIdx,
+                                               const tColor *pal,
+                                               int *outNumTiles, int *outAtlasH);
+
 #endif /* GAME_RENDER_HARDWARE_H */

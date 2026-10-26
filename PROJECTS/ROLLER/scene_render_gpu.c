@@ -137,6 +137,7 @@ typedef struct {
  * used by scene_render_gpu_end_frame's "Pick Textures as PNG" export and by
  * scene_render_gpu_load_texture's "Dump Textures as PNG" export. */
 static void save_picked_texture_png(const SceneGPUTextureSlot *slot, int surfIdx, bool isPair);
+static void texture_bank_folder_name(int tex_idx, char *out, size_t outSize);
 static void set_texture_dump_name(SceneGPUTextureSlot *slot, int tex_idx);
 static void dump_texture_slot_pngs(const SceneGPUTextureSlot *slot);
 
@@ -4695,6 +4696,19 @@ static uint8 **load_hd_tiles(const SceneGPUTextureSlot *slot, int *outHdSize)
     return tiles;
 }
 
+uint8 *scene_render_gpu_load_hd_bank_tile(int tex_idx, int tile, int tileSize, int *ioHdSize)
+{
+    if (!g_bHDTextures || !ioHdSize) return NULL;
+    char folder[64];
+    texture_bank_folder_name(tex_idx, folder, sizeof(folder));
+    char path[600];
+    SDL_snprintf(path, sizeof(path), "../hd_textures/%s/%03d.png", folder, tile);
+    SDL_PathInfo info;
+    if (!SDL_GetPathInfo(path, &info) || info.type != SDL_PATHTYPE_FILE)
+        return NULL;
+    return load_hd_tile_rgba(path, tileSize, ioHdSize);
+}
+
 static void free_hd_tiles(uint8 **tiles, int numTiles)
 {
     if (!tiles) return;
@@ -5990,7 +6004,7 @@ static void save_picked_texture_png(const SceneGPUTextureSlot *slot, int surfIdx
  * Only 64x64 banks are dumped; 32x32 banks (low-memory gfx_size mode) are
  * skipped so they can't overwrite the full-size dumps.
  * -------------------------------------------------------------------------- */
-static void set_texture_dump_name(SceneGPUTextureSlot *slot, int tex_idx)
+static void texture_bank_folder_name(int tex_idx, char *out, size_t outSize)
 {
     const char *src = GetTextureBankSource(tex_idx);
     const char *base = src;
@@ -5998,12 +6012,17 @@ static void set_texture_dump_name(SceneGPUTextureSlot *slot, int tex_idx)
         if (*p == '/' || *p == '\\') base = p + 1;
 
     size_t n = 0;
-    for (; base[n] && base[n] != '.' && n < sizeof(slot->dumpName) - 1; n++)
-        slot->dumpName[n] = (char)SDL_tolower((unsigned char)base[n]);
-    slot->dumpName[n] = '\0';
+    for (; base[n] && base[n] != '.' && n < outSize - 1; n++)
+        out[n] = (char)SDL_tolower((unsigned char)base[n]);
+    out[n] = '\0';
 
     if (n == 0)
-        SDL_snprintf(slot->dumpName, sizeof(slot->dumpName), "bank%02d", tex_idx);
+        SDL_snprintf(out, outSize, "bank%02d", tex_idx);
+}
+
+static void set_texture_dump_name(SceneGPUTextureSlot *slot, int tex_idx)
+{
+    texture_bank_folder_name(tex_idx, slot->dumpName, sizeof(slot->dumpName));
 }
 
 static void dump_texture_slot_pngs(const SceneGPUTextureSlot *slot)

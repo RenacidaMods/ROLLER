@@ -169,9 +169,20 @@ static bool ensure_tag_label_texture(SDL_GPUDevice *device, const char *label,
 /* ==========================================================================
  * Car texture atlas
  * ========================================================================== */
-static SDL_GPUTexture *build_car_atlas(SDL_GPUDevice *dev, int carIdx,
-                                        const tColor *pal,
-                                        int *outNumTiles, int *outAtlasH)
+/* Shared by the race renderer and the car-select screen (menu_render_gpu.c).
+ * Layout: the car's 64x64 tiles 4 per row, plus a white strip at the bottom
+ * that flat-coloured polygons sample. *outAtlasH is that layout's height in
+ * 64-pixel units (numRows * 64 + 1), which the UV maths uses.
+ *
+ * With HD Textures on and ../hd_textures/<car file>/<tile>.png present, the
+ * sheet is built k = hdSize / 64 times larger in both directions: HD tiles
+ * as they are, other tiles scaled up nearest-neighbour, and the white strip
+ * k rows tall, so every UV fraction (and *outAtlasH) is unchanged. The HD
+ * sheet gets mipmaps, since a 256-pixel tile on a car is usually drawn
+ * smaller than that and would shimmer without them. */
+SDL_GPUTexture *game_render_hw_build_car_atlas(SDL_GPUDevice *dev, int carIdx,
+                                               const tColor *pal,
+                                               int *outNumTiles, int *outAtlasH)
 {
     int texSlot = car_texmap[carIdx];
     if (texSlot <= 0) return NULL;
@@ -181,36 +192,65 @@ static SDL_GPUTexture *build_car_atlas(SDL_GPUDevice *dev, int carIdx,
     if (nTiles <= 0) return NULL;
 
     int numRows = (nTiles + 3) / 4;
-    int atlasW  = 256;
-    int atlasH  = numRows * 64 + 1;   /* +1 row for white pixel */
+
+    /* HD tiles: all must share one size (the first found sets it). */
+    uint8 **hdTiles = calloc((size_t)nTiles, sizeof(*hdTiles));
+    int hdSize = 0, hdCount = 0;
+    if (hdTiles) {
+        for (int t = 0; t < nTiles; t++) {
+            hdTiles[t] = scene_render_gpu_load_hd_bank_tile(texSlot, t, 64, &hdSize);
+            if (hdTiles[t]) hdCount++;
+        }
+    }
+    int k = hdCount > 0 ? hdSize / 64 : 1;
+    int tilePx  = 64 * k;
+    int atlasW  = 256 * k;
+    int atlasH  = (numRows * 64 + 1) * k;   /* white strip: k rows */
 
     uint8 *rgba = calloc((size_t)atlasW * atlasH * 4, 1);
-    if (!rgba) return NULL;
+    if (!rgba) {
+        for (int t = 0; hdTiles && t < nTiles; t++) free(hdTiles[t]);
+        free(hdTiles);
+        return NULL;
+    }
 
     for (int t = 0; t < nTiles; t++) {
         int col = t % 4, row = t / 4;
-        for (int y = 0; y < 64; y++) {
-            for (int x = 0; x < 64; x++) {
-                int srcOff = (row * 64 + y) * 256 + col * 64 + x;
+        const uint8 *hd = hdTiles ? hdTiles[t] : NULL;
+        for (int y = 0; y < tilePx; y++) {
+            uint8 *dstRow = rgba + ((size_t)(row * tilePx + y) * atlasW + col * tilePx) * 4;
+            if (hd) {
+                memcpy(dstRow, hd + (size_t)y * tilePx * 4, (size_t)tilePx * 4);
+                continue;
+            }
+            for (int x = 0; x < tilePx; x++) {
+                int srcOff = (row * 64 + y / k) * 256 + col * 64 + x / k;
                 uint8 palIdx = texData[srcOff];
-                int dstOff = ((row * 64 + y) * atlasW + col * 64 + x) * 4;
                 const tColor *c = &pal[palIdx];
-                rgba[dstOff + 0] = (uint8)(c->byR * 255 / 63);
-                rgba[dstOff + 1] = (uint8)(c->byG * 255 / 63);
-                rgba[dstOff + 2] = (uint8)(c->byB * 255 / 63);
-                rgba[dstOff + 3] = palIdx ? 255 : 0;
+                dstRow[x * 4 + 0] = (uint8)(c->byR * 255 / 63);
+                dstRow[x * 4 + 1] = (uint8)(c->byG * 255 / 63);
+                dstRow[x * 4 + 2] = (uint8)(c->byB * 255 / 63);
+                dstRow[x * 4 + 3] = palIdx ? 255 : 0;
             }
         }
     }
-    for (int x = 0; x < atlasW; x++) {
-        int off = ((atlasH - 1) * atlasW + x) * 4;
-        rgba[off] = rgba[off+1] = rgba[off+2] = rgba[off+3] = 255;
+    for (int y = atlasH - k; y < atlasH; y++) {
+        for (int x = 0; x < atlasW; x++) {
+            int off = (y * atlasW + x) * 4;
+            rgba[off] = rgba[off+1] = rgba[off+2] = rgba[off+3] = 255;
+        }
     }
 
-    SDL_GPUTexture *tex = scene_render_gpu_upload_rgba(dev, rgba, atlasW, atlasH, false);
+    if (hdCount > 0)
+        SDL_Log("HD-TEX: car texture bank %d: %d of %d tiles replaced at %dx%d",
+                texSlot, hdCount, nTiles, hdSize, hdSize);
+    for (int t = 0; hdTiles && t < nTiles; t++) free(hdTiles[t]);
+    free(hdTiles);
+
+    SDL_GPUTexture *tex = scene_render_gpu_upload_rgba(dev, rgba, atlasW, atlasH, k > 1);
     free(rgba);
     if (outNumTiles) *outNumTiles = nTiles;
-    if (outAtlasH)   *outAtlasH  = atlasH;
+    if (outAtlasH)   *outAtlasH  = numRows * 64 + 1;
     return tex;
 }
 
@@ -235,7 +275,7 @@ static bool build_car_mesh(SDL_GPUDevice *dev, int carIdx,
                             const tColor *pal, GRHWCarMesh *out)
 {
     int numTiles = 0, atlasH = 0;
-    out->atlas = build_car_atlas(dev, carIdx, pal, &numTiles, &atlasH);
+    out->atlas = game_render_hw_build_car_atlas(dev, carIdx, pal, &numTiles, &atlasH);
     bool hasAtlas = (out->atlas != NULL && numTiles > 0);
     float fAtlasH = hasAtlas ? (float)atlasH : 1.0f;
 

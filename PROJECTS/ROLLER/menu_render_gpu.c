@@ -8,6 +8,7 @@
 #include "roller.h"
 #include "debug_overlay.h"
 #include "scene_render_gpu.h" /* scene_render_gpu_upload_rgba/_buffer */
+#include "game_render_hardware.h" /* game_render_hw_build_car_atlas */
 #include <string.h>
 #include <stdlib.h>
 #include <math.h>
@@ -1106,60 +1107,13 @@ static void FreeMeshPreview(SDL_GPUDevice *dev, MeshPreview *mp, SDL_GPUTexture 
 // 3D mesh previews — car
 //---------------------------------------------------------------------------
 
-// Build RGBA texture atlas from car's indexed-color tile data.
-// Layout: 256px wide (4 tiles per row), with one extra white row at bottom.
+// Car texture sheet: shared with the race renderer (game_render_hw_build_car_atlas),
+// which also handles HD replacement tiles.
 static SDL_GPUTexture *BuildCarTextureAtlas(MenuRendererGPU *r, int carIdx,
                                             const tColor *pal,
                                             int *outNumTiles, int *outAtlasH)
 {
-    int texSlot = car_texmap[carIdx];
-    if (texSlot <= 0) return NULL;
-
-    uint8 *texData = cartex_vga[texSlot - 1];
-    if (!texData) return NULL;
-
-    int nTiles = num_textures[texSlot - 1];
-    if (nTiles <= 0) return NULL;
-
-    int numRows = (nTiles + 3) / 4;
-    int atlasW = 256;
-    int atlasH = numRows * 64 + 1; // +1 row for white pixel
-
-    uint8 *rgba = calloc((size_t)atlasW * atlasH * 4, 1);
-    if (!rgba) return NULL;
-
-    // Convert sorted indexed-color tiles (4-per-row, 256px wide) to RGBA
-    for (int t = 0; t < nTiles; t++) {
-        int col = t % 4;
-        int row = t / 4;
-        for (int y = 0; y < 64; y++) {
-            for (int x = 0; x < 64; x++) {
-                int srcOff = (row * 64 + y) * 256 + col * 64 + x;
-                uint8 palIdx = texData[srcOff];
-                int ax = col * 64 + x;
-                int ay = row * 64 + y;
-                int dstOff = (ay * atlasW + ax) * 4;
-                const tColor *c = &pal[palIdx];
-                rgba[dstOff + 0] = (uint8)(c->byR * 255 / 63);
-                rgba[dstOff + 1] = (uint8)(c->byG * 255 / 63);
-                rgba[dstOff + 2] = (uint8)(c->byB * 255 / 63);
-                rgba[dstOff + 3] = palIdx ? 255 : 0;
-            }
-        }
-    }
-
-    // Fill bottom row with white (flat-colored polygon UVs sample here)
-    for (int x = 0; x < atlasW; x++) {
-        int off = ((atlasH - 1) * atlasW + x) * 4;
-        rgba[off] = rgba[off + 1] = rgba[off + 2] = rgba[off + 3] = 255;
-    }
-
-    SDL_GPUTexture *tex = scene_render_gpu_upload_rgba(r->device, rgba, atlasW, atlasH, false);
-    free(rgba);
-
-    *outNumTiles = nTiles;
-    *outAtlasH = atlasH;
-    return tex;
+    return game_render_hw_build_car_atlas(r->device, carIdx, pal, outNumTiles, outAtlasH);
 }
 
 void menu_render_gpu_load_car_mesh(MenuRendererGPU *r, int carIdx, const tColor *pal)
