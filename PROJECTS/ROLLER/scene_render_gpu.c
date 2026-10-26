@@ -131,6 +131,8 @@ typedef struct {
      * bank's source file at load time, lower case, no directory or extension
      * (e.g. "texture1"), or "bankNN" when the source is unknown. */
     char            dumpName[64];
+    /* Size of this bank's HD replacement tiles, 0 when none were loaded. */
+    int             hdTileSize;
 } SceneGPUTextureSlot;
 
 /* Forward declarations: defined further down (near scene_render_gpu_quad_world_legacy),
@@ -4861,6 +4863,7 @@ SceneTextureHandle scene_render_gpu_load_texture(SceneRendererGPU *r,
     /* HD replacement tiles, NULL when off or none exist for this bank. */
     int    hdSize  = 0;
     uint8 **hdTiles = g_bHDTextures ? load_hd_tiles(s, &hdSize) : NULL;
+    s->hdTileSize = hdTiles ? hdSize : 0;
 
     /* One command buffer for all tile + pair uploads for this slot (more
      * only if HD tiles push it past SCENE_GPU_UPLOAD_FLUSH_BYTES).
@@ -6195,6 +6198,10 @@ void scene_render_gpu_quad_world_legacy(SceneRendererGPU *r,
         r->texSlots[texture].in_use) {
         slot = &r->texSlots[texture];
     }
+    /* Clouds always sample nearest, matching the original's hard-edged
+     * 64-pixel art -- except with HD cloud tiles, which use the normal
+     * (filtered, mipmapped) sampler so they don't turn into big blocks. */
+    bool cloudNearest = isCloud && !(slot && slot->hdTileSize > 0);
 
     bool isFlatColor = false;
     bool isTrackDarken = false;
@@ -6703,7 +6710,7 @@ void scene_render_gpu_quad_world_legacy(SceneRendererGPU *r,
      * draw distances. */
     SceneGPUDrawCmd *last = r->drawCmdCount > 0 ? &r->drawCmds[r->drawCmdCount-1] : NULL;
     bool batch = last && last->texture == gpuTex && last->kind == kind
-              && last->forceNearest == isCloud;
+              && last->forceNearest == cloudNearest;
     if (batch) {
         last->vertexCount += 6;
     } else {
@@ -6713,7 +6720,7 @@ void scene_render_gpu_quad_world_legacy(SceneRendererGPU *r,
             .vertexStart  = base,
             .vertexCount  = 6,
             .kind         = kind,
-            .forceNearest = isCloud,
+            .forceNearest = cloudNearest,
         };
     }
     r->vertexCount += 6;
