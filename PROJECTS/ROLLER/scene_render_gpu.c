@@ -170,9 +170,10 @@ typedef struct {
     int             firstIndex;
     int             idxCount;
     float           mvp[16];
-    /* Car shine (game_car_vertex.hlsl): camera position and world "up" in
-     * the car's own coordinates, xyz + unused w. Zero for shadows. */
-    float           shine[8];
+    /* Car shine (game_car_vertex.hlsl): camera position, world "up" and a
+     * world horizontal axis in the car's own coordinates, xyz + unused w.
+     * Zero for shadows. */
+    float           shine[12];
 } SceneGPUCarDrawCmd;
 
 /* --------------------------------------------------------------------------
@@ -6857,7 +6858,7 @@ void scene_render_gpu_queue_car_draw(SceneRendererGPU *r,
                                       int firstIndex,
                                       int idxCount,
                                       const float mvp[16],
-                                      const float shine[8])
+                                      const float shine[12])
 {
     if (!r || r->carDrawCount >= SCENE_GPU_MAX_CAR_DRAWS) return;
     SceneGPUCarDrawCmd *cmd = &r->carDraws[r->carDrawCount++];

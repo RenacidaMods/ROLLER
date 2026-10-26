@@ -157,6 +157,16 @@ static int Func3ScreenKeyPressed(void)
   }
 
   Func3InjectMouseClick();
+  // ROLLER: a modifier on its own isn't "a key" here, so Alt+Print Screen
+  // doesn't skip the screen being captured (same rule as the intro and
+  // winner race in 3d.c).
+  while (fatkbhit() && !twoparter) {
+    uint8 byRawKey = key_buffer[read_key];
+    if (byRawKey != WHIP_SCANCODE_LALT && byRawKey != WHIP_SCANCODE_LCTRL
+        && byRawKey != WHIP_SCANCODE_LSHIFT && byRawKey != WHIP_SCANCODE_RSHIFT)
+      break;
+    fatgetch();
+  }
   return fatkbhit();
 }
 

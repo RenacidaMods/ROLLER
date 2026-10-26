@@ -606,15 +606,15 @@ static bool mat4_invert(float out[16], const float m[16])
     return true;
 }
 
-/* Car shine inputs for one car body: the camera position and world up
- * (game Z) in the car's own coordinates, from its world matrix and the
- * view's view-projection. The camera centre is the point the projection
- * sends to clip (0, 0, z, 0), so it is inverse(vp) * (0, 0, 1, 0). All
- * zero (no shine) if a matrix can't be inverted. */
-static void car_shine_inputs(float shine[8], const float vp[16], const float world[16])
+/* Car shine inputs for one car body: the camera position, world up (game
+ * Z) and world X axis in the car's own coordinates, from its world matrix
+ * and the view's view-projection. The camera centre is the point the
+ * projection sends to clip (0, 0, z, 0), so it is inverse(vp) * (0, 0, 1, 0).
+ * All zero (no shine) if a matrix can't be inverted. */
+static void car_shine_inputs(float shine[12], const float vp[16], const float world[16])
 {
     float ivp[16], iw[16];
-    memset(shine, 0, 8 * sizeof(float));
+    memset(shine, 0, 12 * sizeof(float));
     if (!mat4_invert(ivp, vp) || !mat4_invert(iw, world)) return;
     float cw = ivp[11];   /* column 2 of inverse(vp) is inverse(vp) * (0,0,1,0) */
     if (fabsf(cw) < 1e-20f) return;
@@ -622,6 +622,7 @@ static void car_shine_inputs(float shine[8], const float vp[16], const float wor
     for (int r = 0; r < 3; r++) {
         shine[r]     = iw[r] * cam[0] + iw[4 + r] * cam[1] + iw[8 + r] * cam[2] + iw[12 + r];
         shine[4 + r] = iw[8 + r];   /* inverse(world) * (0, 0, 1, 0) */
+        shine[8 + r] = iw[r];       /* inverse(world) * (1, 0, 0, 0) */
     }
 }
 
@@ -768,7 +769,7 @@ void game_render_hw_draw_car(GameRendererHardware       *r,
         chunk_model_matrix(Mc, &localdata[chunk]);
         mat4_mul(Mcar_chunk, Mc, M);
         mat4_mul(mvp, vp, Mcar_chunk);
-        float shine[8];
+        float shine[12];
         car_shine_inputs(shine, vp, Mcar_chunk);
         scene_render_gpu_queue_car_draw(scene,
             vertBuf, mesh->indexBuf, mesh->atlas,
@@ -825,7 +826,7 @@ void game_render_hw_draw_car(GameRendererHardware       *r,
     } else {
         /* Body: no chunk transform (Car.pos is world-space when airborne) */
         mat4_mul(mvp, vp, M);
-        float shine[8];
+        float shine[12];
         car_shine_inputs(shine, vp, M);
         scene_render_gpu_queue_car_draw(scene,
             vertBuf, mesh->indexBuf, mesh->atlas,
