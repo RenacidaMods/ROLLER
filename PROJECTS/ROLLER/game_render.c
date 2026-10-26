@@ -1248,6 +1248,19 @@ void game_render_set_hud_map_scale(GameRenderer *renderer, float scale) {
     if (renderer) scene_render_gpu_set_hud_map_scale(renderer->gpu, scale);
 }
 
+void game_render_hud_message_begin(GameRenderer *renderer) {
+    /* Same buffer and size game_render_end_frame hands the GPU HUD; in-race
+     * menus (game_req) draw the HUD unscaled anyway. */
+    if (!renderer || renderer->mode != GAME_RENDER_GPU || !renderer->gpu || game_req) return;
+    int iHudW = renderer->hudW > 0 ? renderer->hudW : (XMAX > 0 ? XMAX : 640);
+    int iHudH = renderer->hudH > 0 ? renderer->hudH : (YMAX > 0 ? YMAX : 400);
+    scene_render_gpu_hud_message_begin(renderer->gpu, scrbuf, iHudW, iHudH);
+}
+
+void game_render_hud_message_end(GameRenderer *renderer) {
+    if (renderer && renderer->gpu) scene_render_gpu_hud_message_end(renderer->gpu);
+}
+
 void game_render_set_fov_multiplier(GameRenderer *renderer, float mult) {
     if (renderer) scene_render_gpu_set_fov_multiplier(renderer->gpu, mult);
 }
@@ -1330,6 +1343,12 @@ void game_render_set_hud_scale(GameRenderer *renderer, float scale) {
 }
 void game_render_set_hud_map_scale(GameRenderer *renderer, float scale) {
     (void)renderer; (void)scale;
+}
+void game_render_hud_message_begin(GameRenderer *renderer) {
+    (void)renderer;
+}
+void game_render_hud_message_end(GameRenderer *renderer) {
+    (void)renderer;
 }
 void game_render_set_fov_multiplier(GameRenderer *renderer, float mult) {
     (void)renderer; (void)mult;

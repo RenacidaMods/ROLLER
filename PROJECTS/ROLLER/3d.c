@@ -5207,6 +5207,7 @@ void game_copypic(uint8 *pSrc, uint8 *pDest, int iCarIdx)
         set_game_scale(0, 64.0f);
         game_count[0] = 2;
       }
+      game_render_hud_message_begin(g_pGameRenderer);  // ROLLER: zoom messages stay out of HUD scaling
       if (iCarIdx == player1_car || winner_mode || intro)// Render zoom messages for player 1 or in special modes
       {                                         // Choose font based on zoom and screen resolution
         if (zoom_size[0]) {
@@ -5239,6 +5240,7 @@ void game_copypic(uint8 *pSrc, uint8 *pDest, int iCarIdx)
             ZoomSub(zoom_sub[1], font6_ascii, rev_vga[1], 1, font6_offsets);
         }
       }
+      game_render_hud_message_end(g_pGameRenderer);
       goto HANDLE_SPECIAL_MODES;
     }
     shown_panel = -1;                           // Hide panel and handle race countdown logic

@@ -43,6 +43,10 @@ void game_render_set_ambient_occlusion(GameRenderer *renderer, bool enabled,
                                        float radius, float strength);
 void game_render_set_ambient_occlusion_view(GameRenderer *renderer, bool showOnly);
 void game_render_set_hud_scale(GameRenderer *renderer, float scale);
+/* Around ZoomString: keeps zoom messages out of HUD scaling (see
+ * scene_render_gpu_hud_message_begin). */
+void game_render_hud_message_begin(GameRenderer *renderer);
+void game_render_hud_message_end(GameRenderer *renderer);
 void game_render_set_hud_map_scale(GameRenderer *renderer, float scale);
 /* FOV multiplier on top of game camera: 1.0=native, <1=zoom in, >1=zoom out */
 void game_render_set_fov_multiplier(GameRenderer *renderer, float mult);

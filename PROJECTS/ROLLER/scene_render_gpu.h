@@ -160,6 +160,12 @@ void scene_render_gpu_set_hud_map_scale(SceneRendererGPU *r, float scale);
 /* Set each frame: while an in-race menu is drawn on the HUD, HUD scale is
  * suspended so the menu isn't split into separately scaled pieces. */
 void scene_render_gpu_set_hud_menu_open(SceneRendererGPU *r, bool open);
+/* Bracket the drawing of a zoom message ("FINAL LAP", "PIT WORK"...) into
+ * the HUD buffer buf (w x h). While HUD scale is on, the pixels it changed
+ * are moved to a separate layer drawn unscaled on top, and buf is restored,
+ * so the message doesn't take part in HUD piece scaling. No-op otherwise. */
+void scene_render_gpu_hud_message_begin(SceneRendererGPU *r, uint8 *buf, int w, int h);
+void scene_render_gpu_hud_message_end(SceneRendererGPU *r);
 
 /* brightness: additive offset; 0.0 = neutral, positive = brighter, negative = darker */
 void scene_render_gpu_set_brightness(SceneRendererGPU *r, float brightness);
