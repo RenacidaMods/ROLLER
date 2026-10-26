@@ -114,12 +114,20 @@ float4 main(PixelInput input) : SV_Target
     T = (dot(T, T) < 1e-4) ? normalize(cross(N, float3(0.0, 0.0, 1.0)) + 1e-3) : normalize(T);
     float3 B = cross(N, T);
 
-    float bias = max(radius * 0.03, P.z * 0.0015);
+    // Close to the camera a fixed world radius covers a large part of the
+    // screen, so many samples landed off-screen; on a wall beside the camera
+    // that drew a hard-edged region and a grid of lines. Cap the radius at
+    // 6% of the screen width (projected), and average over the samples that
+    // actually landed rather than counting skipped ones as open.
+    float pxPerUnit = fov.x * 0.5 * depthSize.x / P.z;
+    float r = min(radius, (0.06 * depthSize.x) / max(pxPerUnit, 1e-6));
+    float bias = max(r * 0.03, P.z * 0.0015);
     float occlusion = 0.0;
+    float landed = 0.0;
     [unroll]
     for (int i = 0; i < SAMPLE_COUNT; i++) {
         float3 k = kKernel[i];
-        float3 s = P + (T * k.x + B * k.y + N * k.z) * radius;
+        float3 s = P + (T * k.x + B * k.y + N * k.z) * r;
         if (s.z <= zNear)
             continue;
         float2 suv = projectUV(s);
@@ -127,7 +135,8 @@ float4 main(PixelInput input) : SV_Target
             continue;
         float sd = loadDepth(suv);
         float sceneZ = viewZ(sd);
-        float inRange = smoothstep(0.0, 1.0, radius / max(abs(P.z - sceneZ), 1e-3));
+        float inRange = smoothstep(0.0, 1.0, r / max(abs(P.z - sceneZ), 1e-3));
+        landed += 1.0;
         // Angle bias: only surfaces rising well above this point's own plane
         // occlude. Without it, the shallow folds where road sections meet on
         // a hill (a few degrees each) showed as dark lines across the road;
@@ -138,7 +147,7 @@ float4 main(PixelInput input) : SV_Target
         occlusion += (sceneZ <= s.z - bias ? 1.0 : 0.0) * inRange * angleTerm;
     }
 
-    float ao = 1.0 - occlusion / SAMPLE_COUNT;
+    float ao = landed >= 4.0 ? 1.0 - occlusion / landed : 1.0;
     ao = lerp(ao, 1.0, saturate((P.z - fadeStart) / max(fadeEnd - fadeStart, 1.0)));
     return float4(ao, ao, ao, 1.0);
 }
