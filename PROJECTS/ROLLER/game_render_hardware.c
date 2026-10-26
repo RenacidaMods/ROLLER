@@ -189,15 +189,17 @@ static bool ensure_tag_label_texture(SDL_GPUDevice *device, const char *label,
 typedef struct {
     SDL_GPUDevice  *dev;
     SDL_GPUTexture *tex;
-    int             refs, numTiles, atlasH;
+    int             refs, numTiles, atlasH, scale;
 } GRHWCarAtlasShare;
 
 static GRHWCarAtlasShare s_carAtlasShare[GRHW_CAR_ATLAS_SHARE_SLOTS];   /* by texture bank */
 
 SDL_GPUTexture *game_render_hw_build_car_atlas(SDL_GPUDevice *dev, int carIdx,
                                                const tColor *pal,
-                                               int *outNumTiles, int *outAtlasH)
+                                               int *outNumTiles, int *outAtlasH,
+                                               int *outScale)
 {
+    if (outScale) *outScale = 1;
     int texSlot = car_texmap[carIdx];
     if (texSlot <= 0) return NULL;
     uint8 *texData = cartex_vga[texSlot - 1];
@@ -212,6 +214,7 @@ SDL_GPUTexture *game_render_hw_build_car_atlas(SDL_GPUDevice *dev, int carIdx,
         share->refs++;
         if (outNumTiles) *outNumTiles = share->numTiles;
         if (outAtlasH)   *outAtlasH  = share->atlasH;
+        if (outScale)    *outScale   = share->scale;
         return share->tex;
     }
 
@@ -264,9 +267,10 @@ SDL_GPUTexture *game_render_hw_build_car_atlas(SDL_GPUDevice *dev, int carIdx,
     SDL_GPUTexture *tex = scene_render_gpu_upload_rgba(dev, rgba, atlasW, atlasH, k > 1);
     free(rgba);
     if (tex && share && share->refs == 0 && hdCount == nTiles)
-        *share = (GRHWCarAtlasShare){dev, tex, 1, nTiles, numRows * 64 + 1};
+        *share = (GRHWCarAtlasShare){dev, tex, 1, nTiles, numRows * 64 + 1, k};
     if (outNumTiles) *outNumTiles = nTiles;
     if (outAtlasH)   *outAtlasH  = numRows * 64 + 1;
+    if (outScale && tex) *outScale = k;
     return tex;
 }
 
@@ -307,7 +311,7 @@ static bool build_car_mesh(SDL_GPUDevice *dev, int carIdx,
                             const tColor *pal, GRHWCarMesh *out)
 {
     int numTiles = 0, atlasH = 0;
-    out->atlas = game_render_hw_build_car_atlas(dev, carIdx, pal, &numTiles, &atlasH);
+    out->atlas = game_render_hw_build_car_atlas(dev, carIdx, pal, &numTiles, &atlasH, NULL);
     bool hasAtlas = (out->atlas != NULL && numTiles > 0);
     float fAtlasH = hasAtlas ? (float)atlasH : 1.0f;
 

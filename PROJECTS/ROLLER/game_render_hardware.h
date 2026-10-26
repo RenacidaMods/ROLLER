@@ -43,10 +43,13 @@ void game_render_hw_draw_fps_overlay(void);
  * strip), using HD tiles from ../hd_textures when HD Textures is on. Shared
  * by the race renderer and the car-select screen. *outAtlasH is the layout
  * height in 64-pixel units (numRows * 64 + 1) for UV maths, whatever the
- * texture's real size. NULL if the car has no texture data. */
+ * texture's real size. *outScale (optional) is the sheet's size relative to
+ * the original: 1, or 4 for 256-pixel HD tiles, which also get mipmaps.
+ * NULL if the car has no texture data. */
 SDL_GPUTexture *game_render_hw_build_car_atlas(SDL_GPUDevice *dev, int carIdx,
                                                const tColor *pal,
-                                               int *outNumTiles, int *outAtlasH);
+                                               int *outNumTiles, int *outAtlasH,
+                                               int *outScale);
 
 /* Release a texture from game_render_hw_build_car_atlas (HD sheets are shared
  * between cars of the same design). Any other texture is simply released. */

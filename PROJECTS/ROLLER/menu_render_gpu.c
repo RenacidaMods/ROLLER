@@ -58,6 +58,7 @@ typedef struct {
     SDL_GPUTexture *texture;
     int indexCount;
     bool loaded;
+    bool smooth; // HD car sheet: sample with meshSmoothSampler
 } MeshPreview;
 
 typedef enum {
@@ -76,6 +77,7 @@ typedef struct {
     float mvp[16];
     float vpX, vpY, vpW, vpH; // viewport in virtual 640x400 coords
     eMeshPipeline ePipeline;
+    bool smooth;
 } MeshDrawCommand;
 
 #define MAX_MESH_DRAWS 4
@@ -86,6 +88,10 @@ struct MenuRendererGPU {
 
     SDL_GPUGraphicsPipeline *pipeline;
     SDL_GPUSampler *sampler;
+    // Linear + trilinear mipmaps + anisotropic, for HD car sheets: the
+    // nearest sampler above skips texels when a 4x sheet is drawn small,
+    // leaving jagged edges on the car-select car.
+    SDL_GPUSampler *meshSmoothSampler;
     SDL_GPUBuffer *vertexBuffer;
     SDL_GPUTransferBuffer *vertexTransferBuffer;
 
@@ -385,7 +391,8 @@ static void ReplayMeshDraws(MenuRendererGPU *r, SDL_GPURenderPass *renderPass)
 
         SDL_PushGPUVertexUniformData(r->cmdBuf, 0, cmd->mvp, sizeof(cmd->mvp));
 
-        SDL_GPUTextureSamplerBinding tsb = { .texture = cmd->texture, .sampler = r->sampler };
+        SDL_GPUSampler *sampler = (cmd->smooth && r->meshSmoothSampler) ? r->meshSmoothSampler : r->sampler;
+        SDL_GPUTextureSamplerBinding tsb = { .texture = cmd->texture, .sampler = sampler };
         SDL_BindGPUFragmentSamplers(renderPass, 0, &tsb, 1);
 
         SDL_GPUBufferBinding vbb = { .buffer = cmd->vertexBuffer };
@@ -574,6 +581,17 @@ MenuRendererGPU *menu_render_gpu_create(SDL_GPUDevice *device, SDL_Window *windo
     sampInfo.address_mode_v = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
     r->sampler = SDL_CreateGPUSampler(device, &sampInfo);
 
+    SDL_GPUSamplerCreateInfo smoothInfo = {0};
+    smoothInfo.min_filter = SDL_GPU_FILTER_LINEAR;
+    smoothInfo.mag_filter = SDL_GPU_FILTER_LINEAR;
+    smoothInfo.mipmap_mode = SDL_GPU_SAMPLERMIPMAPMODE_LINEAR;
+    smoothInfo.address_mode_u = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
+    smoothInfo.address_mode_v = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
+    smoothInfo.enable_anisotropy = true;
+    smoothInfo.max_anisotropy = 16.0f;
+    smoothInfo.max_lod = 1000.0f;
+    r->meshSmoothSampler = SDL_CreateGPUSampler(device, &smoothInfo);
+
     // Vertex buffer
     SDL_GPUBufferCreateInfo bufInfo = {0};
     bufInfo.usage = SDL_GPU_BUFFERUSAGE_VERTEX;
@@ -615,6 +633,7 @@ void menu_render_gpu_destroy(MenuRendererGPU *r)
     SDL_ReleaseGPUBuffer(r->device, r->vertexBuffer);
     SDL_ReleaseGPUTransferBuffer(r->device, r->vertexTransferBuffer);
     SDL_ReleaseGPUSampler(r->device, r->sampler);
+    if (r->meshSmoothSampler) SDL_ReleaseGPUSampler(r->device, r->meshSmoothSampler);
     SDL_ReleaseGPUGraphicsPipeline(r->device, r->pipeline);
     free(r);
 }
@@ -1100,6 +1119,7 @@ static void FreeMeshPreview(SDL_GPUDevice *dev, MeshPreview *mp, SDL_GPUTexture 
         game_render_hw_release_car_atlas(dev, mp->texture);   /* may be a shared car sheet */
     mp->texture = NULL;
     mp->indexCount = 0;
+    mp->smooth = false;
     mp->loaded = false;
 }
 
@@ -1111,9 +1131,10 @@ static void FreeMeshPreview(SDL_GPUDevice *dev, MeshPreview *mp, SDL_GPUTexture 
 // which also handles HD replacement tiles.
 static SDL_GPUTexture *BuildCarTextureAtlas(MenuRendererGPU *r, int carIdx,
                                             const tColor *pal,
-                                            int *outNumTiles, int *outAtlasH)
+                                            int *outNumTiles, int *outAtlasH,
+                                            int *outScale)
 {
-    return game_render_hw_build_car_atlas(r->device, carIdx, pal, outNumTiles, outAtlasH);
+    return game_render_hw_build_car_atlas(r->device, carIdx, pal, outNumTiles, outAtlasH, outScale);
 }
 
 void menu_render_gpu_load_car_mesh(MenuRendererGPU *r, int carIdx, const tColor *pal)
@@ -1133,9 +1154,9 @@ void menu_render_gpu_load_car_mesh(MenuRendererGPU *r, int carIdx, const tColor 
     if (!coords || !pols || numPols == 0) return;
 
     // Build texture atlas from car texture data
-    int numTiles = 0, atlasH = 0;
+    int numTiles = 0, atlasH = 0, atlasScale = 1;
     SDL_GPUTexture *atlas = BuildCarTextureAtlas(r, carIdx, pal,
-                                                 &numTiles, &atlasH);
+                                                 &numTiles, &atlasH, &atlasScale);
     bool hasAtlas = (atlas != NULL && numTiles > 0);
     float fAtlasH = hasAtlas ? (float)atlasH : 1.0f;
 
@@ -1431,6 +1452,7 @@ void menu_render_gpu_load_car_mesh(MenuRendererGPU *r, int carIdx, const tColor 
         r->carMesh.indexBuffer = scene_render_gpu_upload_buffer(r->device,
             SDL_GPU_BUFFERUSAGE_INDEX, indices, idxCount * sizeof(uint32));
         r->carMesh.texture = atlas ? atlas : r->whiteTexture;
+        r->carMesh.smooth = atlas && atlasScale > 1;
         r->carMesh.indexCount = idxCount;
         r->carMesh.loaded = true;
         r->loadedCarIdx = carIdx;
@@ -1504,6 +1526,7 @@ void menu_render_gpu_draw_car_preview(MenuRendererGPU *r, float angle, float dis
     cmd->vertexBuffer = r->carMesh.vertexBuffer;
     cmd->indexBuffer = r->carMesh.indexBuffer;
     cmd->texture = r->carMesh.texture;
+    cmd->smooth = r->carMesh.smooth;
     cmd->indexCount = r->carMesh.indexCount;
     cmd->iFirstIndex = 0;
     memcpy(cmd->mvp, mvp, sizeof(mvp));
@@ -1743,6 +1766,7 @@ void menu_render_gpu_draw_track_preview(MenuRendererGPU *r, float cameraZ,
     pShadowCommand->vpW = (float)totalW;
     pShadowCommand->vpH = (float)totalH;
     pShadowCommand->ePipeline = MESH_PIPELINE_TRACK_SHADOW;
+    pShadowCommand->smooth = false;
 
     MeshDrawCommand *pTrackCommand = &r->meshDraws[r->meshDrawCount++];
     *pTrackCommand = *pShadowCommand;
