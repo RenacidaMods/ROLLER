@@ -1164,9 +1164,12 @@ void menu_render_gpu_load_car_mesh(MenuRendererGPU *r, int carIdx, const tColor 
     float whiteU = hasAtlas ? 0.5f / 256.0f : 0.0f;
     float whiteV = hasAtlas ? (atlasH - 0.5f) / fAtlasH : 0.0f;
 
-    // Each quad: up to 3×(4 verts + 6 indices): front + BACK reversed + FLIP_BACKFACE reversed
-    MeshVertex *vertices = calloc(numPols * 12 + 4, sizeof(MeshVertex));
-    uint32 *indices = calloc(numPols * 18 + 6, sizeof(uint32));
+    // Each quad: up to 3 faces (front + BACK reversed + FLIP_BACKFACE reversed),
+    // each a grid from game_render_hw_write_car_quad, plus the shadow quad
+    _Static_assert(sizeof(MeshVertex) == 9 * sizeof(float),
+                   "game_render_hw_write_car_quad writes 9-float vertices");
+    MeshVertex *vertices = calloc((size_t)numPols * 3 * GAME_RENDER_HW_QUAD_VERTS + 4, sizeof(MeshVertex));
+    uint32 *indices = calloc((size_t)numPols * 3 * GAME_RENDER_HW_QUAD_INDICES + 6, sizeof(uint32));
     int vertCount = 0, idxCount = 0;
 
     tCarColorRemap *remap = &car_flat_remap[carIdx];
@@ -1234,31 +1237,22 @@ void menu_render_gpu_load_car_mesh(MenuRendererGPU *r, int carIdx, const tColor 
             { u1, v0 }, { u0, v0 }, { u0, v1 }, { u1, v1 }
         };
 
+        float pos[4][3], col[4] = { cr, cg, cb, ca };
         for (int v = 0; v < 4; v++) {
             uint8 vi = pols[p].verts[v];
             if (vi >= numCoords) vi = 0;
-
-            MeshVertex *mv = &vertices[vertCount++];
             // Game uses Z-up (X=forward, Y=lateral, Z=up);
             // GPU pipeline uses Y-up (X=right, Y=up, Z=depth)
-            mv->position[0] = coords[vi].fY;   // GPU X = model lateral
-            mv->position[1] = coords[vi].fZ;   // GPU Y = model up
-            mv->position[2] = coords[vi].fX;   // GPU Z = model forward
-            mv->uv[0] = uvs[v][0];
-            mv->uv[1] = uvs[v][1];
-            mv->color[0] = cr;
-            mv->color[1] = cg;
-            mv->color[2] = cb;
-            mv->color[3] = ca;
+            pos[v][0] = coords[vi].fY;   // GPU X = model lateral
+            pos[v][1] = coords[vi].fZ;   // GPU Y = model up
+            pos[v][2] = coords[vi].fX;   // GPU Z = model forward
         }
 
-        // Two triangles: (0,1,2) and (0,2,3)
-        indices[idxCount++] = baseVert + 0;
-        indices[idxCount++] = baseVert + 1;
-        indices[idxCount++] = baseVert + 2;
-        indices[idxCount++] = baseVert + 0;
-        indices[idxCount++] = baseVert + 2;
-        indices[idxCount++] = baseVert + 3;
+        // Triangles (0,1,2) and (0,2,3), as a grid
+        game_render_hw_write_car_quad(vertices[baseVert].position, &indices[idxCount],
+                                      (uint32)baseVert, pos, uvs, col, false);
+        vertCount += GAME_RENDER_HW_QUAD_VERTS;
+        idxCount  += GAME_RENDER_HW_QUAD_INDICES;
 
         // Back face for BACK-only (no FLIP_BACKFACE) polygons.
         // FLIP_BACKFACE polygons (with or without BACK) are handled in the loop below.
@@ -1300,28 +1294,14 @@ void menu_render_gpu_load_car_mesh(MenuRendererGPU *r, int carIdx, const tColor 
             };
 
             int backBase = vertCount;
-            for (int v = 0; v < 4; v++) {
-                uint8 vi = pols[p].verts[v];
-                if (vi >= numCoords) vi = 0;
-                MeshVertex *mv = &vertices[vertCount++];
-                mv->position[0] = coords[vi].fY;
-                mv->position[1] = coords[vi].fZ;
-                mv->position[2] = coords[vi].fX;
-                mv->uv[0] = back_uvs[v][0];
-                mv->uv[1] = back_uvs[v][1];
-                mv->color[0] = bcr;
-                mv->color[1] = bcg;
-                mv->color[2] = bcb;
-                mv->color[3] = 1.0f;
-            }
+            float bcol[4] = { bcr, bcg, bcb, 1.0f };
+            // pos[] still holds this polygon's corners from the front face
 
-            // Reversed winding: (0,2,1) and (0,3,2)
-            indices[idxCount++] = backBase + 0;
-            indices[idxCount++] = backBase + 2;
-            indices[idxCount++] = backBase + 1;
-            indices[idxCount++] = backBase + 0;
-            indices[idxCount++] = backBase + 3;
-            indices[idxCount++] = backBase + 2;
+            // Reversed winding: (0,2,1) and (0,3,2), as a grid
+            game_render_hw_write_car_quad(vertices[backBase].position, &indices[idxCount],
+                                          (uint32)backBase, pos, back_uvs, bcol, true);
+            vertCount += GAME_RENDER_HW_QUAD_VERTS;
+            idxCount  += GAME_RENDER_HW_QUAD_INDICES;
         }
     }
 
@@ -1380,26 +1360,18 @@ void menu_render_gpu_load_car_mesh(MenuRendererGPU *r, int carIdx, const tColor 
             { u1, v0 }, { u0, v0 }, { u0, v1 }, { u1, v1 }
         };
         int baseVert = vertCount;
+        float pos[4][3], col[4] = { cr, cg, cb, 1.0f };
         for (int v = 0; v < 4; v++) {
             uint8 vi = pols[p].verts[3 - v];
             if (vi >= numCoords) vi = 0;
-            MeshVertex *mv = &vertices[vertCount++];
-            mv->position[0] = coords[vi].fY;
-            mv->position[1] = coords[vi].fZ;
-            mv->position[2] = coords[vi].fX;
-            mv->uv[0] = uvs[v][0];
-            mv->uv[1] = uvs[v][1];
-            mv->color[0] = cr;
-            mv->color[1] = cg;
-            mv->color[2] = cb;
-            mv->color[3] = 1.0f;
+            pos[v][0] = coords[vi].fY;
+            pos[v][1] = coords[vi].fZ;
+            pos[v][2] = coords[vi].fX;
         }
-        indices[idxCount++] = (uint32)(baseVert + 0);
-        indices[idxCount++] = (uint32)(baseVert + 1);
-        indices[idxCount++] = (uint32)(baseVert + 2);
-        indices[idxCount++] = (uint32)(baseVert + 0);
-        indices[idxCount++] = (uint32)(baseVert + 2);
-        indices[idxCount++] = (uint32)(baseVert + 3);
+        game_render_hw_write_car_quad(vertices[baseVert].position, &indices[idxCount],
+                                      (uint32)baseVert, pos, uvs, col, false);
+        vertCount += GAME_RENDER_HW_QUAD_VERTS;
+        idxCount  += GAME_RENDER_HW_QUAD_INDICES;
     }
 
     // Shadow quad: semi-transparent ground plane computed from mesh bounding box

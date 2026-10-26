@@ -290,6 +290,40 @@ void game_render_hw_release_car_atlas(SDL_GPUDevice *dev, SDL_GPUTexture *tex)
     SDL_ReleaseGPUTexture(dev, tex);
 }
 
+void game_render_hw_write_car_quad(float *verts, uint32 *indices, uint32 baseVert,
+                                   const float pos[4][3], const float uv[4][2],
+                                   const float color[4], bool reverseWinding)
+{
+    const int n = GAME_RENDER_HW_QUAD_GRID;
+    for (int j = 0; j <= n; j++) {
+        float t = (float)j / (float)n;
+        for (int i = 0; i <= n; i++) {
+            float s = (float)i / (float)n;
+            float w[4] = { (1.0f - s) * (1.0f - t), s * (1.0f - t), s * t, (1.0f - s) * t };
+            float *v = verts + (size_t)(j * (n + 1) + i) * 9;
+            for (int c = 0; c < 3; c++)
+                v[c] = w[0] * pos[0][c] + w[1] * pos[1][c] + w[2] * pos[2][c] + w[3] * pos[3][c];
+            for (int c = 0; c < 2; c++)
+                v[3 + c] = w[0] * uv[0][c] + w[1] * uv[1][c] + w[2] * uv[2][c] + w[3] * uv[3][c];
+            for (int c = 0; c < 4; c++)
+                v[5 + c] = color[c];
+        }
+    }
+    for (int j = 0; j < n; j++) {
+        for (int i = 0; i < n; i++) {
+            uint32 a = baseVert + (uint32)(j * (n + 1) + i);
+            uint32 b = a + 1, c = a + (uint32)n + 2, d = a + (uint32)n + 1;
+            if (reverseWinding) { *indices++ = a; *indices++ = c; *indices++ = b;
+                                  *indices++ = a; *indices++ = d; *indices++ = c; }
+            else                { *indices++ = a; *indices++ = b; *indices++ = c;
+                                  *indices++ = a; *indices++ = c; *indices++ = d; }
+        }
+    }
+}
+
+_Static_assert(sizeof(GRHWMeshVertex) == 9 * sizeof(float),
+               "game_render_hw_write_car_quad writes 9-float vertices");
+
 /* Resolve animated polygon texture for a given animation frame.
  * Wheel-animation entries have animIdx 0-3 and advance with anim_frame.
  * Body-variant entries (animIdx >= 4) use bodyVariant = carIdx & 1, matching
@@ -335,9 +369,10 @@ static bool build_car_mesh(SDL_GPUDevice *dev, int carIdx,
 
     if (!coords || !pols || numPols == 0) return false;
 
-    /* *2 for front + back faces per polygon (pBacks[]) */
-    GRHWMeshVertex *vertices = calloc((size_t)(numPols * 8 + 8), sizeof(GRHWMeshVertex));
-    uint32         *indices  = calloc((size_t)(numPols * 12 + 12), sizeof(uint32));
+    /* *2 for front + back faces per polygon (pBacks[]); each face is a grid
+     * (game_render_hw_write_car_quad), plus the 4-vertex shadow quad */
+    GRHWMeshVertex *vertices = calloc((size_t)numPols * 2 * GAME_RENDER_HW_QUAD_VERTS + 4, sizeof(GRHWMeshVertex));
+    uint32         *indices  = calloc((size_t)numPols * 2 * GAME_RENDER_HW_QUAD_INDICES + 6, sizeof(uint32));
     if (!vertices || !indices) {
         free(vertices); free(indices);
         if (out->atlas) { game_render_hw_release_car_atlas(dev, out->atlas); out->atlas = NULL; }
@@ -394,27 +429,18 @@ static bool build_car_mesh(SDL_GPUDevice *dev, int carIdx,
             { u1, v0 }, { u0, v0 }, { u0, v1 }, { u1, v1 }
         };
 
+        float pos[4][3], col[4] = { cr, cg, cb, ca };
         for (int v = 0; v < 4; v++) {
             uint8 vi = pols[p].verts[v];
             if (vi >= (uint8)numCoords) vi = 0;
-            GRHWMeshVertex *mv = &vertices[vertCount++];
-            mv->position[0] = coords[vi].fX;
-            mv->position[1] = coords[vi].fY;
-            mv->position[2] = coords[vi].fZ;
-            mv->uv[0]       = uvs[v][0];
-            mv->uv[1]       = uvs[v][1];
-            mv->color[0]    = cr;
-            mv->color[1]    = cg;
-            mv->color[2]    = cb;
-            mv->color[3]    = ca;
+            pos[v][0] = coords[vi].fX;
+            pos[v][1] = coords[vi].fY;
+            pos[v][2] = coords[vi].fZ;
         }
-
-        indices[idxCount++] = (uint32)(baseVert + 0);
-        indices[idxCount++] = (uint32)(baseVert + 1);
-        indices[idxCount++] = (uint32)(baseVert + 2);
-        indices[idxCount++] = (uint32)(baseVert + 0);
-        indices[idxCount++] = (uint32)(baseVert + 2);
-        indices[idxCount++] = (uint32)(baseVert + 3);
+        game_render_hw_write_car_quad(vertices[baseVert].position, &indices[idxCount],
+                                      (uint32)baseVert, pos, uvs, col, false);
+        vertCount += GAME_RENDER_HW_QUAD_VERTS;
+        idxCount  += GAME_RENDER_HW_QUAD_INDICES;
     }
 
     /* Back-face polygons (reversed winding), following SW renderer logic (car.c:1647):
@@ -470,26 +496,18 @@ static bool build_car_mesh(SDL_GPUDevice *dev, int carIdx,
         float uvsBack[4][2] = {
             { u1b, v0b }, { u0b, v0b }, { u0b, v1b }, { u1b, v1b }
         };
+        float pos[4][3], col[4] = { crb, cgb, cbb, cab };
         for (int v = 0; v < 4; v++) {
             uint8 vi = pols[p].verts[3 - v];  /* reversed vertex order */
             if (vi >= (uint8)numCoords) vi = 0;
-            GRHWMeshVertex *mv = &vertices[vertCount++];
-            mv->position[0] = coords[vi].fX;
-            mv->position[1] = coords[vi].fY;
-            mv->position[2] = coords[vi].fZ;
-            mv->uv[0]       = uvsBack[v][0];
-            mv->uv[1]       = uvsBack[v][1];
-            mv->color[0]    = crb;
-            mv->color[1]    = cgb;
-            mv->color[2]    = cbb;
-            mv->color[3]    = cab;
+            pos[v][0] = coords[vi].fX;
+            pos[v][1] = coords[vi].fY;
+            pos[v][2] = coords[vi].fZ;
         }
-        indices[idxCount++] = (uint32)(baseVert + 0);
-        indices[idxCount++] = (uint32)(baseVert + 1);
-        indices[idxCount++] = (uint32)(baseVert + 2);
-        indices[idxCount++] = (uint32)(baseVert + 0);
-        indices[idxCount++] = (uint32)(baseVert + 2);
-        indices[idxCount++] = (uint32)(baseVert + 3);
+        game_render_hw_write_car_quad(vertices[baseVert].position, &indices[idxCount],
+                                      (uint32)baseVert, pos, uvsBack, col, false);
+        vertCount += GAME_RENDER_HW_QUAD_VERTS;
+        idxCount  += GAME_RENDER_HW_QUAD_INDICES;
     }
 
     if (animFrame == 0) out->bodyIndexCount = idxCount;

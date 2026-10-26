@@ -51,6 +51,26 @@ SDL_GPUTexture *game_render_hw_build_car_atlas(SDL_GPUDevice *dev, int carIdx,
                                                int *outNumTiles, int *outAtlasH,
                                                int *outScale);
 
+/* Car panels are quads with one texture tile stretched corner to corner.
+ * Drawn as two triangles, a tapered panel (the bonnet, say) bends its texture
+ * along the shared diagonal. This writes one quad as a
+ * GAME_RENDER_HW_QUAD_GRID x GAME_RENDER_HW_QUAD_GRID grid instead, positions
+ * and UVs blended bilinearly from the corners, which shrinks the bend below
+ * what's visible. Every panel gets the same grid, so neighbouring panels'
+ * shared edges get identical vertices (no T-junction cracks).
+ *
+ * pos/uv corners are in the usual order (triangles 0,1,2 and 0,2,3). verts
+ * receives GAME_RENDER_HW_QUAD_VERTS vertices of 9 floats each -- position[3],
+ * uv[2], color[4], the layout of both GRHWMeshVertex and the menu's
+ * MeshVertex -- and indices GAME_RENDER_HW_QUAD_INDICES entries offset by
+ * baseVert. reverseWinding flips every triangle (a back face). */
+#define GAME_RENDER_HW_QUAD_GRID    4
+#define GAME_RENDER_HW_QUAD_VERTS   ((GAME_RENDER_HW_QUAD_GRID + 1) * (GAME_RENDER_HW_QUAD_GRID + 1))
+#define GAME_RENDER_HW_QUAD_INDICES (GAME_RENDER_HW_QUAD_GRID * GAME_RENDER_HW_QUAD_GRID * 6)
+void game_render_hw_write_car_quad(float *verts, uint32 *indices, uint32 baseVert,
+                                   const float pos[4][3], const float uv[4][2],
+                                   const float color[4], bool reverseWinding);
+
 /* Release a texture from game_render_hw_build_car_atlas (HD sheets are shared
  * between cars of the same design). Any other texture is simply released. */
 void game_render_hw_release_car_atlas(SDL_GPUDevice *dev, SDL_GPUTexture *tex);
