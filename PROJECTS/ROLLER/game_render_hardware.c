@@ -951,9 +951,10 @@ void game_render_hw_draw_car(GameRendererHardware       *r,
         float Mcar_chunk_phys[16], shadowMvp[16];
         mat4_mul(Mcar_chunk_phys, Mc, M_phys);
         mat4_mul(shadowMvp, vp, Mcar_chunk_phys);
-        scene_render_gpu_queue_car_shadow_draw(scene,
-            vertBuf, mesh->indexBuf, mesh->atlas,
-            mesh->bodyIndexCount, 6, shadowMvp);
+        if (!(textures_off & TEX_OFF_SHADOWS))   /* shadows option off: none, as in SW (car.c) */
+            scene_render_gpu_queue_car_shadow_draw(scene,
+                vertBuf, mesh->indexBuf, mesh->atlas,
+                mesh->bodyIndexCount, 6, shadowMvp);
 
     } else {
         /* Body: no chunk transform (Car.pos is world-space when airborne) */
@@ -1114,9 +1115,10 @@ void game_render_hw_draw_car(GameRendererHardware       *r,
 
             float shadowMvp[16];
             mat4_mul(shadowMvp, vp, Mshadow);
-            scene_render_gpu_queue_car_shadow_draw(scene,
-                vertBuf, mesh->indexBuf, mesh->atlas,
-                mesh->bodyIndexCount, 6, shadowMvp);
+            if (!(textures_off & TEX_OFF_SHADOWS))
+                scene_render_gpu_queue_car_shadow_draw(scene,
+                    vertBuf, mesh->indexBuf, mesh->atlas,
+                    mesh->bodyIndexCount, 6, shadowMvp);
         }
     }
 }
