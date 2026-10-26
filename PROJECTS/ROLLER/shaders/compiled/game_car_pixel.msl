@@ -12,7 +12,8 @@ struct type_ScenePixelUniforms
     float4 fogColor;
     float contrast;
     float brightness;
-    float2 _pad;
+    float carShine;
+    float _pad;
 };
 
 struct main0_out
@@ -25,21 +26,62 @@ struct main0_in
     float2 in_var_TEXCOORD0 [[user(locn0)]];
     float4 in_var_TEXCOORD1 [[user(locn1)]];
     float in_var_TEXCOORD2 [[user(locn2)]];
+    float3 in_var_TEXCOORD3 [[user(locn3)]];
+    float3 in_var_TEXCOORD4 [[user(locn4)]];
+    float3 in_var_TEXCOORD5 [[user(locn5)]];
 };
 
 fragment main0_out main0(main0_in in [[stage_in]], constant type_ScenePixelUniforms& ScenePixelUniforms [[buffer(0)]], texture2d<float> meshTexture [[texture(0)]], sampler meshSampler [[sampler(0)]])
 {
     main0_out out = {};
-    float4 _60 = meshTexture.sample(meshSampler, in.in_var_TEXCOORD0);
-    float4 _61 = _60 * in.in_var_TEXCOORD1;
-    if (_61.w < 0.00999999977648258209228515625)
+    float3 _71 = dfdx(in.in_var_TEXCOORD3);
+    float3 _72 = dfdy(in.in_var_TEXCOORD3);
+    float3 _73 = cross(_71, _72);
+    float4 _77 = meshTexture.sample(meshSampler, in.in_var_TEXCOORD0);
+    float4 _78 = _77 * in.in_var_TEXCOORD1;
+    if (_78.w < 0.00999999977648258209228515625)
     {
         discard_fragment();
     }
-    float _76 = precise::max(0.0, in.in_var_TEXCOORD2 - ScenePixelUniforms.fogStart);
-    float3 _92 = mix(powr(precise::max(_61.xyz, float3(9.9999997473787516355514526367188e-06)), float3(1.0 / ScenePixelUniforms.gamma)).xyz, ScenePixelUniforms.fogColor.xyz, float3(fast::clamp(1.0 - exp((((-ScenePixelUniforms.fogDensity) * ScenePixelUniforms.fogDensity) * _76) * _76), 0.0, 1.0))).xyz;
-    float3 _111 = fast::clamp(fast::clamp(((mix(float3(dot(_92, float3(0.2125999927520751953125, 0.715200006961822509765625, 0.072200000286102294921875))), _92, float3(ScenePixelUniforms.saturation)).xyz - float3(0.5)) * ScenePixelUniforms.contrast) + float3(0.5), float3(0.0), float3(1.0)).xyz + float3(ScenePixelUniforms.brightness), float3(0.0), float3(1.0));
-    out.out_var_SV_Target = float4(_111.x, _111.y, _111.z, _61.w);
+    float _83 = length(_73);
+    bool _90;
+    if (ScenePixelUniforms.carShine > 0.0)
+    {
+        _90 = _83 > 9.9999999600419720025001879548654e-13;
+    }
+    else
+    {
+        _90 = false;
+    }
+    float4 _127;
+    if (_90)
+    {
+        float3 _94 = _73 / float3(_83);
+        float _96 = dot(_94, fast::normalize(in.in_var_TEXCOORD4));
+        float3 _102;
+        float _103;
+        if (_96 < 0.0)
+        {
+            _102 = -_94;
+            _103 = -_96;
+        }
+        else
+        {
+            _102 = _94;
+            _103 = _96;
+        }
+        float _109 = fast::clamp(dot(_102, fast::normalize(in.in_var_TEXCOORD5)), 0.0, 1.0);
+        float3 _125 = float3(1.0) - ((float3(1.0) - _78.xyz) * (float3(1.0) - (mix(float3(1.0), ScenePixelUniforms.fogColor.xyz, float3(0.3499999940395355224609375)) * fast::clamp(ScenePixelUniforms.carShine * ((0.550000011920928955078125 * powr(1.0 - fast::clamp(_103, 0.0, 1.0), 3.0)) + ((0.300000011920928955078125 * _109) * _109)), 0.0, 1.0))));
+        _127 = float4(_125.x, _125.y, _125.z, _78.w);
+    }
+    else
+    {
+        _127 = _78;
+    }
+    float _138 = precise::max(0.0, in.in_var_TEXCOORD2 - ScenePixelUniforms.fogStart);
+    float3 _154 = mix(powr(precise::max(_127.xyz, float3(9.9999997473787516355514526367188e-06)), float3(1.0 / ScenePixelUniforms.gamma)).xyz, ScenePixelUniforms.fogColor.xyz, float3(fast::clamp(1.0 - exp((((-ScenePixelUniforms.fogDensity) * ScenePixelUniforms.fogDensity) * _138) * _138), 0.0, 1.0))).xyz;
+    float3 _173 = fast::clamp(fast::clamp(((mix(float3(dot(_154, float3(0.2125999927520751953125, 0.715200006961822509765625, 0.072200000286102294921875))), _154, float3(ScenePixelUniforms.saturation)).xyz - float3(0.5)) * ScenePixelUniforms.contrast) + float3(0.5), float3(0.0), float3(1.0)).xyz + float3(ScenePixelUniforms.brightness), float3(0.0), float3(1.0));
+    out.out_var_SV_Target = float4(_173.x, _173.y, _173.z, _127.w);
     return out;
 }
 

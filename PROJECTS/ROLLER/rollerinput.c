@@ -3407,6 +3407,12 @@ static int InputParseDebugSetting(const char *szName, const char *szValue)
     return 1;
   }
 
+  if (InputStringEqualsNoCase(szName, "CarShine")) {
+    g_fCarShine = (float)atof(szValue);
+    if (g_fCarShine < 0.0f || g_fCarShine > 2.0f) g_fCarShine = 0.0f;
+    return 1;
+  }
+
   if (InputStringEqualsNoCase(szName, "HUDMapScale")) {
     g_fHUDMapScale = (float)atof(szValue);
     if (g_fHUDMapScale < 0.25f || g_fHUDMapScale > 1.0f) g_fHUDMapScale = 1.0f;
@@ -3861,6 +3867,7 @@ void InputSaveConfig(void)
   fprintf(fp, "AOStrength=%.2f\n", g_fAOStrength);
   fprintf(fp, "HUDScale=%.2f\n", g_fHUDScale);
   fprintf(fp, "HUDMapScale=%.2f\n", g_fHUDMapScale);
+  fprintf(fp, "CarShine=%.2f\n", g_fCarShine);
   fprintf(fp, "Brightness=%.2f\n", g_fBrightness);
   fprintf(fp, "FovMultiplier=%.2f\n", g_fFovMultiplier);
   fprintf(fp, "MirrorFov=%.2f\n", g_fMirrorFov);

@@ -1,6 +1,8 @@
 cbuffer MeshVertexUniforms : register(b0, space1)
 {
     float4x4 mvpMatrix;
+    float4   camPosObj;   /* car shine: camera position in the car's own coordinates */
+    float4   upObj;       /* car shine: world "up" in the car's own coordinates */
 };
 
 struct VertexInput
@@ -16,6 +18,9 @@ struct VertexOutput
     float2 uv       : TEXCOORD0;
     float4 color    : TEXCOORD1;
     float  fogDepth : TEXCOORD2;
+    float3 objPos   : TEXCOORD3;
+    float3 toCam    : TEXCOORD4;
+    float3 up       : TEXCOORD5;
 };
 
 VertexOutput main(VertexInput input)
@@ -25,5 +30,8 @@ VertexOutput main(VertexInput input)
     output.uv       = input.uv;
     output.color    = input.color;
     output.fogDepth = output.position.w;
+    output.objPos   = input.position;
+    output.toCam    = camPosObj.xyz - input.position;
+    output.up       = upObj.xyz;
     return output;
 }

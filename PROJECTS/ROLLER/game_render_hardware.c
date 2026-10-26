@@ -580,6 +580,51 @@ static bool build_car_mesh(SDL_GPUDevice *dev, int carIdx,
  * Matrix helpers
  * ========================================================================== */
 
+/* General 4x4 inverse (column-major in, column-major out); false if singular. */
+static bool mat4_invert(float out[16], const float m[16])
+{
+    float inv[16];
+    inv[0]  =  m[5]*m[10]*m[15] - m[5]*m[11]*m[14] - m[9]*m[6]*m[15] + m[9]*m[7]*m[14] + m[13]*m[6]*m[11] - m[13]*m[7]*m[10];
+    inv[4]  = -m[4]*m[10]*m[15] + m[4]*m[11]*m[14] + m[8]*m[6]*m[15] - m[8]*m[7]*m[14] - m[12]*m[6]*m[11] + m[12]*m[7]*m[10];
+    inv[8]  =  m[4]*m[9]*m[15]  - m[4]*m[11]*m[13] - m[8]*m[5]*m[15] + m[8]*m[7]*m[13] + m[12]*m[5]*m[11] - m[12]*m[7]*m[9];
+    inv[12] = -m[4]*m[9]*m[14]  + m[4]*m[10]*m[13] + m[8]*m[5]*m[14] - m[8]*m[6]*m[13] - m[12]*m[5]*m[10] + m[12]*m[6]*m[9];
+    inv[1]  = -m[1]*m[10]*m[15] + m[1]*m[11]*m[14] + m[9]*m[2]*m[15] - m[9]*m[3]*m[14] - m[13]*m[2]*m[11] + m[13]*m[3]*m[10];
+    inv[5]  =  m[0]*m[10]*m[15] - m[0]*m[11]*m[14] - m[8]*m[2]*m[15] + m[8]*m[3]*m[14] + m[12]*m[2]*m[11] - m[12]*m[3]*m[10];
+    inv[9]  = -m[0]*m[9]*m[15]  + m[0]*m[11]*m[13] + m[8]*m[1]*m[15] - m[8]*m[3]*m[13] - m[12]*m[1]*m[11] + m[12]*m[3]*m[9];
+    inv[13] =  m[0]*m[9]*m[14]  - m[0]*m[10]*m[13] - m[8]*m[1]*m[14] + m[8]*m[2]*m[13] + m[12]*m[1]*m[10] - m[12]*m[2]*m[9];
+    inv[2]  =  m[1]*m[6]*m[15]  - m[1]*m[7]*m[14]  - m[5]*m[2]*m[15] + m[5]*m[3]*m[14] + m[13]*m[2]*m[7]  - m[13]*m[3]*m[6];
+    inv[6]  = -m[0]*m[6]*m[15]  + m[0]*m[7]*m[14]  + m[4]*m[2]*m[15] - m[4]*m[3]*m[14] - m[12]*m[2]*m[7]  + m[12]*m[3]*m[6];
+    inv[10] =  m[0]*m[5]*m[15]  - m[0]*m[7]*m[13]  - m[4]*m[1]*m[15] + m[4]*m[3]*m[13] + m[12]*m[1]*m[7]  - m[12]*m[3]*m[5];
+    inv[14] = -m[0]*m[5]*m[14]  + m[0]*m[6]*m[13]  + m[4]*m[1]*m[14] - m[4]*m[2]*m[13] - m[12]*m[1]*m[6]  + m[12]*m[2]*m[5];
+    inv[3]  = -m[1]*m[6]*m[11]  + m[1]*m[7]*m[10]  + m[5]*m[2]*m[11] - m[5]*m[3]*m[10] - m[9]*m[2]*m[7]   + m[9]*m[3]*m[6];
+    inv[7]  =  m[0]*m[6]*m[11]  - m[0]*m[7]*m[10]  - m[4]*m[2]*m[11] + m[4]*m[3]*m[10] + m[8]*m[2]*m[7]   - m[8]*m[3]*m[6];
+    inv[11] = -m[0]*m[5]*m[11]  + m[0]*m[7]*m[9]   + m[4]*m[1]*m[11] - m[4]*m[3]*m[9]  - m[8]*m[1]*m[7]   + m[8]*m[3]*m[5];
+    inv[15] =  m[0]*m[5]*m[10]  - m[0]*m[6]*m[9]   - m[4]*m[1]*m[10] + m[4]*m[2]*m[9]  + m[8]*m[1]*m[6]   - m[8]*m[2]*m[5];
+    float det = m[0]*inv[0] + m[1]*inv[4] + m[2]*inv[8] + m[3]*inv[12];
+    if (fabsf(det) < 1e-20f) return false;
+    for (int i = 0; i < 16; i++) out[i] = inv[i] / det;
+    return true;
+}
+
+/* Car shine inputs for one car body: the camera position and world up
+ * (game Z) in the car's own coordinates, from its world matrix and the
+ * view's view-projection. The camera centre is the point the projection
+ * sends to clip (0, 0, z, 0), so it is inverse(vp) * (0, 0, 1, 0). All
+ * zero (no shine) if a matrix can't be inverted. */
+static void car_shine_inputs(float shine[8], const float vp[16], const float world[16])
+{
+    float ivp[16], iw[16];
+    memset(shine, 0, 8 * sizeof(float));
+    if (!mat4_invert(ivp, vp) || !mat4_invert(iw, world)) return;
+    float cw = ivp[11];   /* column 2 of inverse(vp) is inverse(vp) * (0,0,1,0) */
+    if (fabsf(cw) < 1e-20f) return;
+    float cam[3] = { ivp[8] / cw, ivp[9] / cw, ivp[10] / cw };
+    for (int r = 0; r < 3; r++) {
+        shine[r]     = iw[r] * cam[0] + iw[4 + r] * cam[1] + iw[8 + r] * cam[2] + iw[12 + r];
+        shine[4 + r] = iw[8 + r];   /* inverse(world) * (0, 0, 1, 0) */
+    }
+}
+
 /* 4×4 column-major matrix multiply: out = A * B */
 static void mat4_mul(float out[16], const float A[16], const float B[16])
 {
@@ -723,9 +768,11 @@ void game_render_hw_draw_car(GameRendererHardware       *r,
         chunk_model_matrix(Mc, &localdata[chunk]);
         mat4_mul(Mcar_chunk, Mc, M);
         mat4_mul(mvp, vp, Mcar_chunk);
+        float shine[8];
+        car_shine_inputs(shine, vp, Mcar_chunk);
         scene_render_gpu_queue_car_draw(scene,
             vertBuf, mesh->indexBuf, mesh->atlas,
-            0, mesh->bodyIndexCount, mvp);
+            0, mesh->bodyIndexCount, mvp, shine);
 
         /* Shadow: use physical pose (no camera lean offsets) so shadow corners
          * stay exactly on the road surface.  adjPose tilts the quad slightly
@@ -778,9 +825,11 @@ void game_render_hw_draw_car(GameRendererHardware       *r,
     } else {
         /* Body: no chunk transform (Car.pos is world-space when airborne) */
         mat4_mul(mvp, vp, M);
+        float shine[8];
+        car_shine_inputs(shine, vp, M);
         scene_render_gpu_queue_car_draw(scene,
             vertBuf, mesh->indexBuf, mesh->atlas,
-            0, mesh->bodyIndexCount, mvp);
+            0, mesh->bodyIndexCount, mvp, shine);
 
         /* Shadow: replicate car.c:1339-1431's full branch choice for this
          * car's own airborne shadow (3 cases, matching SW exactly):

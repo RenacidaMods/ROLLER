@@ -48,6 +48,8 @@ void game_render_set_hud_scale(GameRenderer *renderer, float scale);
 void game_render_hud_message_begin(GameRenderer *renderer);
 void game_render_hud_message_end(GameRenderer *renderer);
 void game_render_set_hud_map_scale(GameRenderer *renderer, float scale);
+/* Car shine strength (0 = off, up to 2), GPU race cars only. */
+void game_render_set_car_shine(GameRenderer *renderer, float strength);
 /* FOV multiplier on top of game camera: 1.0=native, <1=zoom in, >1=zoom out */
 void game_render_set_fov_multiplier(GameRenderer *renderer, float mult);
 /* Compatibility: emulate SW rasterizer's extra-dark one-pixel track-darken quad border */

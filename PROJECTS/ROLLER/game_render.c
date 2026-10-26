@@ -1248,6 +1248,10 @@ void game_render_set_hud_map_scale(GameRenderer *renderer, float scale) {
     if (renderer) scene_render_gpu_set_hud_map_scale(renderer->gpu, scale);
 }
 
+void game_render_set_car_shine(GameRenderer *renderer, float strength) {
+    if (renderer) scene_render_gpu_set_car_shine(renderer->gpu, strength);
+}
+
 void game_render_hud_message_begin(GameRenderer *renderer) {
     /* Same buffer and size game_render_end_frame hands the GPU HUD; in-race
      * menus (game_req) draw the HUD unscaled anyway. */
@@ -1343,6 +1347,9 @@ void game_render_set_hud_scale(GameRenderer *renderer, float scale) {
 }
 void game_render_set_hud_map_scale(GameRenderer *renderer, float scale) {
     (void)renderer; (void)scale;
+}
+void game_render_set_car_shine(GameRenderer *renderer, float strength) {
+    (void)renderer; (void)strength;
 }
 void game_render_hud_message_begin(GameRenderer *renderer) {
     (void)renderer;
