@@ -1649,7 +1649,10 @@ void menu_render_gpu_draw_car_preview(MenuRendererGPU *r, float angle, float dis
             cmd->shineVS[8 + rr] = model[rr * 4 + 0];   // X axis: R^T * (1, 0, 0)
         }
     }
-    cmd->indexCount = r->carMesh.indexCount;
+    // The shadow quad is the mesh's last 6 indices; the shadows option
+    // (TEX_OFF_SHADOWS) hides it, as it hides car shadows in races.
+    cmd->indexCount = r->carMesh.indexCount
+                    - (((textures_off & TEX_OFF_SHADOWS) && r->carMesh.indexCount > 6) ? 6 : 0);
     cmd->iFirstIndex = 0;
     memcpy(cmd->mvp, mvp, sizeof(mvp));
     cmd->vpX = (float)(destX - padLeft);

@@ -142,9 +142,17 @@ float4 main(PixelInput input) : SV_Target
         // a hill (a few degrees each) showed as dark lines across the road;
         // real corners (wall and road, under cars) rise much more steeply.
         float3 v = viewPos(suv, sd) - P;
-        float elevation = dot(v, N) / max(length(v), 1e-3);
+        float height = dot(v, N);
+        float elevation = height / max(length(v), 1e-3);
         float angleTerm = saturate((elevation - 0.3) / 0.4);
-        occlusion += (sceneZ <= s.z - bias ? 1.0 : 0.0) * inRange * angleTerm;
+        // Height test: the occluder must also stand a real distance above
+        // this surface. Neighbouring track sections often overlap or step by
+        // a few units; those lips are steep, so the angle test alone let
+        // each one darken a radius-wide band beside the join (stripes along
+        // wall and tunnel-roof sections).
+        float minHeight = max(r * 0.08, P.z * 0.002);
+        float heightTerm = saturate((height - minHeight) / minHeight);
+        occlusion += (sceneZ <= s.z - bias ? 1.0 : 0.0) * inRange * angleTerm * heightTerm;
     }
 
     float ao = landed >= 4.0 ? 1.0 - occlusion / landed : 1.0;
