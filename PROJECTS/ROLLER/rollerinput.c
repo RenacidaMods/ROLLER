@@ -3414,6 +3414,12 @@ static int InputParseDebugSetting(const char *szName, const char *szValue)
     return 1;
   }
 
+  if (InputStringEqualsNoCase(szName, "CarShineBevel")) {
+    g_fCarShineBevel = (float)atof(szValue);
+    if (g_fCarShineBevel < 0.0f || g_fCarShineBevel > 1.0f) g_fCarShineBevel = 0.5f;
+    return 1;
+  }
+
   if (InputStringEqualsNoCase(szName, "CarShineSmoothing")) {
     g_fCarShineSmooth = (float)atof(szValue);
     if (g_fCarShineSmooth < 0.0f || g_fCarShineSmooth > 1.0f) g_fCarShineSmooth = 1.0f;
@@ -3892,6 +3898,7 @@ void InputSaveConfig(void)
   fprintf(fp, "CarShineGlint=%.2f\n", g_fCarShineGlint);
   fprintf(fp, "CarShineDarkness=%.2f\n", g_fCarShineDark);
   fprintf(fp, "CarShineSmoothing=%.2f\n", g_fCarShineSmooth);
+  fprintf(fp, "CarShineBevel=%.2f\n", g_fCarShineBevel);
   fprintf(fp, "Brightness=%.2f\n", g_fBrightness);
   fprintf(fp, "FovMultiplier=%.2f\n", g_fFovMultiplier);
   fprintf(fp, "MirrorFov=%.2f\n", g_fMirrorFov);

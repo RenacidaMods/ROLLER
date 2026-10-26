@@ -46,6 +46,8 @@ typedef struct {
     float uv[2];
     float color[4];
     float normal[3];   /* smoothed corner normal (car shine), object space */
+    float edge[2];     /* position across the panel, 0..1 each way (car shine bevel) */
+    float bevel[3];    /* fully blended corner normal, used near panel edges */
 } GRHWMeshVertex;
 
 /* --------------------------------------------------------------------------
@@ -291,7 +293,8 @@ void game_render_hw_release_car_atlas(SDL_GPUDevice *dev, SDL_GPUTexture *tex)
     SDL_ReleaseGPUTexture(dev, tex);
 }
 
-void game_render_hw_car_corner_normals(int designIdx, float creaseDeg, float (*out)[4][3])
+void game_render_hw_car_corner_normals(int designIdx, float (*outSmooth)[4][3],
+                                       float (*outBevel)[4][3])
 {
     if (designIdx < 0 || designIdx > CAR_DESIGN_DEATH) return;
     tCarDesign *design = &CarDesigns[designIdx];
@@ -299,7 +302,8 @@ void game_render_hw_car_corner_normals(int designIdx, float creaseDeg, float (*o
     tVec3 *coords = design->pCoords;
     tPolygon *pols = design->pPols;
     if (!coords || !pols || numPols <= 0 || numCoords <= 0) return;
-    memset(out, 0, (size_t)numPols * sizeof(*out));
+    memset(outSmooth, 0, (size_t)numPols * sizeof(*outSmooth));
+    memset(outBevel, 0, (size_t)numPols * sizeof(*outBevel));
 
     /* Corners at the same position share a vertex, even under another index. */
     int canon[256];
@@ -349,22 +353,32 @@ void game_render_hw_car_corner_normals(int designIdx, float creaseDeg, float (*o
         }
     }
 
-    /* Each corner: the area-weighted sum of the faces meeting there whose
-     * normals are within creaseDeg of this face's. */
-    float cosCrease = cosf(creaseDeg * 3.14159265f / 180.0f);
+    /* Each corner: an area-weighted sum of the faces meeting there.
+     * Smooth: each neighbour weighted by the cosine of its angle to this
+     * face (a sliding scale: 30 deg 0.87, 60 deg 0.5, 80 deg 0.17, 90 deg
+     * and beyond 0). Bevel: every neighbour up to 150 deg at full weight,
+     * so even sharp edges get a rounded normal for the bevel strip. */
+    float cosBevel = cosf(150.0f * 3.14159265f / 180.0f);
     for (int p = 0; p < numPols; p++) {
         for (int k = 0; k < 4; k++) {
-            float s[3] = {0, 0, 0};
+            float sm[3] = {0, 0, 0}, bv[3] = {0, 0, 0};
             for (int q = 0; q < numPols; q++) {
                 if (fu[q][0] == 0.0f && fu[q][1] == 0.0f && fu[q][2] == 0.0f) continue;
                 if (cv[q][0] != cv[p][k] && cv[q][1] != cv[p][k]
                         && cv[q][2] != cv[p][k] && cv[q][3] != cv[p][k]) continue;
-                if (fu[p][0] * fu[q][0] + fu[p][1] * fu[q][1] + fu[p][2] * fu[q][2] < cosCrease) continue;
-                s[0] += fn[q][0]; s[1] += fn[q][1]; s[2] += fn[q][2];
+                float d = fu[p][0] * fu[q][0] + fu[p][1] * fu[q][1] + fu[p][2] * fu[q][2];
+                float w = q == p ? 1.0f : (d > 0.0f ? d : 0.0f);
+                for (int c = 0; c < 3; c++) {
+                    sm[c] += fn[q][c] * w;
+                    if (d >= cosBevel) bv[c] += fn[q][c];
+                }
             }
-            float len = sqrtf(s[0] * s[0] + s[1] * s[1] + s[2] * s[2]);
-            for (int c = 0; c < 3; c++)
-                out[p][k][c] = len > 1e-6f ? s[c] / len : fu[p][c];
+            float ls = sqrtf(sm[0] * sm[0] + sm[1] * sm[1] + sm[2] * sm[2]);
+            float lb = sqrtf(bv[0] * bv[0] + bv[1] * bv[1] + bv[2] * bv[2]);
+            for (int c = 0; c < 3; c++) {
+                outSmooth[p][k][c] = ls > 1e-6f ? sm[c] / ls : fu[p][c];
+                outBevel[p][k][c]  = lb > 1e-6f ? bv[c] / lb : outSmooth[p][k][c];
+            }
         }
     }
     free(fn); free(fu); free(cv);
@@ -373,7 +387,7 @@ void game_render_hw_car_corner_normals(int designIdx, float creaseDeg, float (*o
 void game_render_hw_write_car_quad(float *verts, uint32 *indices, uint32 baseVert,
                                    const float pos[4][3], const float uv[4][2],
                                    const float color[4], const float nrm[4][3],
-                                   bool reverseWinding)
+                                   const float bev[4][3], bool reverseWinding)
 {
     const int n = GAME_RENDER_HW_QUAD_GRID;
     for (int j = 0; j <= n; j++) {
@@ -381,7 +395,7 @@ void game_render_hw_write_car_quad(float *verts, uint32 *indices, uint32 baseVer
         for (int i = 0; i <= n; i++) {
             float s = (float)i / (float)n;
             float w[4] = { (1.0f - s) * (1.0f - t), s * (1.0f - t), s * t, (1.0f - s) * t };
-            float *v = verts + (size_t)(j * (n + 1) + i) * 12;
+            float *v = verts + (size_t)(j * (n + 1) + i) * GAME_RENDER_HW_CAR_VERTEX_FLOATS;
             for (int c = 0; c < 3; c++)
                 v[c] = w[0] * pos[0][c] + w[1] * pos[1][c] + w[2] * pos[2][c] + w[3] * pos[3][c];
             for (int c = 0; c < 2; c++)
@@ -397,6 +411,18 @@ void game_render_hw_write_car_quad(float *verts, uint32 *indices, uint32 baseVer
                 nl = 1.0f / sqrtf(nl);
                 v[9] *= nl; v[10] *= nl; v[11] *= nl;
             }
+            v[12] = s;
+            v[13] = t;
+            float bl = 0.0f;
+            for (int c = 0; c < 3; c++) {
+                v[14 + c] = bev ? w[0] * bev[0][c] + w[1] * bev[1][c] + w[2] * bev[2][c] + w[3] * bev[3][c]
+                                : v[9 + c];
+                bl += v[14 + c] * v[14 + c];
+            }
+            if (bl > 1e-12f) {
+                bl = 1.0f / sqrtf(bl);
+                v[14] *= bl; v[15] *= bl; v[16] *= bl;
+            }
         }
     }
     for (int j = 0; j < n; j++) {
@@ -411,8 +437,8 @@ void game_render_hw_write_car_quad(float *verts, uint32 *indices, uint32 baseVer
     }
 }
 
-_Static_assert(sizeof(GRHWMeshVertex) == 12 * sizeof(float),
-               "game_render_hw_write_car_quad writes 12-float vertices");
+_Static_assert(sizeof(GRHWMeshVertex) == GAME_RENDER_HW_CAR_VERTEX_FLOATS * sizeof(float),
+               "game_render_hw_write_car_quad writes GAME_RENDER_HW_CAR_VERTEX_FLOATS-float vertices");
 
 /* Resolve animated polygon texture for a given animation frame.
  * Wheel-animation entries have animIdx 0-3 and advance with anim_frame.
@@ -477,8 +503,13 @@ static bool build_car_mesh(SDL_GPUDevice *dev, int carIdx,
 
     /* Smoothed corner normals for car shine (shared by every animation frame). */
     float (*cornerN)[4][3] = calloc((size_t)numPols, sizeof(*cornerN));
-    if (cornerN)
-        game_render_hw_car_corner_normals(designIdx, GAME_RENDER_HW_SHINE_CREASE_DEG, cornerN);
+    float (*cornerB)[4][3] = calloc((size_t)numPols, sizeof(*cornerB));
+    if (cornerN && cornerB)
+        game_render_hw_car_corner_normals(designIdx, cornerN, cornerB);
+    else {
+        free(cornerN); free(cornerB);
+        cornerN = NULL; cornerB = NULL;
+    }
 
     /* Build one vertex buffer per animation frame; share one index buffer (geometry is
      * identical across frames — only UV coordinates change for animated wheel polys). */
@@ -541,7 +572,8 @@ static bool build_car_mesh(SDL_GPUDevice *dev, int carIdx,
         }
         game_render_hw_write_car_quad(vertices[baseVert].position, &indices[idxCount],
                                       (uint32)baseVert, pos, uvs, col,
-                                      cornerN ? (const float (*)[3])cornerN[p] : NULL, false);
+                                      cornerN ? (const float (*)[3])cornerN[p] : NULL,
+                                      cornerB ? (const float (*)[3])cornerB[p] : NULL, false);
         vertCount += GAME_RENDER_HW_QUAD_VERTS;
         idxCount  += GAME_RENDER_HW_QUAD_INDICES;
     }
@@ -600,7 +632,7 @@ static bool build_car_mesh(SDL_GPUDevice *dev, int carIdx,
         float uvsBack[4][2] = {
             { u1b, v0b }, { u0b, v0b }, { u0b, v1b }, { u1b, v1b }
         };
-        float pos[4][3], col[4] = { crb, cgb, cbb, cab }, nrm[4][3] = {{0}};
+        float pos[4][3], col[4] = { crb, cgb, cbb, cab }, nrm[4][3] = {{0}}, bev[4][3] = {{0}};
         for (int v = 0; v < 4; v++) {
             uint8 vi = pols[p].verts[3 - v];  /* reversed vertex order */
             if (vi >= (uint8)numCoords) vi = 0;
@@ -608,9 +640,10 @@ static bool build_car_mesh(SDL_GPUDevice *dev, int carIdx,
             pos[v][1] = coords[vi].fY;
             pos[v][2] = coords[vi].fZ;
             if (cornerN) memcpy(nrm[v], cornerN[p][3 - v], sizeof(nrm[v]));
+            if (cornerB) memcpy(bev[v], cornerB[p][3 - v], sizeof(bev[v]));
         }
         game_render_hw_write_car_quad(vertices[baseVert].position, &indices[idxCount],
-                                      (uint32)baseVert, pos, uvsBack, col, nrm, false);
+                                      (uint32)baseVert, pos, uvsBack, col, nrm, bev, false);
         vertCount += GAME_RENDER_HW_QUAD_VERTS;
         idxCount  += GAME_RENDER_HW_QUAD_INDICES;
     }
@@ -662,6 +695,7 @@ static bool build_car_mesh(SDL_GPUDevice *dev, int carIdx,
     free(vertices);
     free(indices);
     free(cornerN);
+    free(cornerB);
 
     if (!out->vertexBufs[0] || !out->indexBuf) {
         for (int f = 0; f < GRHW_ANIM_FRAMES; f++) {

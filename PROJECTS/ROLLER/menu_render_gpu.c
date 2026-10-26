@@ -53,6 +53,8 @@ typedef struct {
     float uv[2];
     float color[4];
     float normal[3];   // smoothed corner normal (car shine); unused by menu_mesh shaders
+    float edge[2];     // position across the panel (car shine bevel)
+    float bevel[3];    // fully blended corner normal, near panel edges
 } MeshVertex;
 
 // Loaded mesh GPU buffers
@@ -414,9 +416,10 @@ static void ReplayMeshDraws(MenuRendererGPU *r, SDL_GPURenderPass *renderPass)
                 float fogDensity, gamma, fogStart, saturation;
                 float fogColor[4];
                 float contrast, brightness;
-                float carShine, carGlint, carDark, carSmooth, _pad[2];
+                float carShine, carGlint, carDark, carSmooth, carBevel, _pad;
             } pu = { 0.0f, 1.0f, 0.0f, 1.0f, {0.7f, 0.75f, 0.8f, 1.0f}, 1.0f, 0.0f,
-                     g_fCarShine, g_fCarShineGlint, g_fCarShineDark, g_fCarShineSmooth, {0} };
+                     g_fCarShine, g_fCarShineGlint, g_fCarShineDark, g_fCarShineSmooth,
+                     g_fCarShineBevel, 0.0f };
             SDL_PushGPUFragmentUniformData(r->cmdBuf, 0, &pu, sizeof(pu));
         } else {
             SDL_PushGPUVertexUniformData(r->cmdBuf, 0, cmd->mvp, sizeof(cmd->mvp));
@@ -595,14 +598,16 @@ MenuRendererGPU *menu_render_gpu_create(SDL_GPUDevice *device, SDL_Window *windo
             game_car_pixel_spirv, game_car_pixel_spirv_size,
             game_car_pixel_msl, game_car_pixel_msl_size, 1, 1);
         if (shineVert && shineFrag) {
-            SDL_GPUVertexAttribute shineAttrs[4];
+            SDL_GPUVertexAttribute shineAttrs[6];
             memcpy(shineAttrs, meshAttrs, sizeof(meshAttrs));
-            shineAttrs[3].location = 3;
-            shineAttrs[3].buffer_slot = 0;
-            shineAttrs[3].format = SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3;
-            shineAttrs[3].offset = offsetof(MeshVertex, normal);
+            shineAttrs[3] = (SDL_GPUVertexAttribute){ .location = 3, .buffer_slot = 0,
+                .format = SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3, .offset = offsetof(MeshVertex, normal) };
+            shineAttrs[4] = (SDL_GPUVertexAttribute){ .location = 4, .buffer_slot = 0,
+                .format = SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2, .offset = offsetof(MeshVertex, edge) };
+            shineAttrs[5] = (SDL_GPUVertexAttribute){ .location = 5, .buffer_slot = 0,
+                .format = SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3, .offset = offsetof(MeshVertex, bevel) };
             meshPipeInfo.vertex_input_state.vertex_attributes = shineAttrs;
-            meshPipeInfo.vertex_input_state.num_vertex_attributes = 4;
+            meshPipeInfo.vertex_input_state.num_vertex_attributes = 6;
             meshPipeInfo.vertex_shader = shineVert;
             meshPipeInfo.fragment_shader = shineFrag;
             r->meshPipelineCarShine = SDL_CreateGPUGraphicsPipeline(device, &meshPipeInfo);
@@ -1269,12 +1274,17 @@ void menu_render_gpu_load_car_mesh(MenuRendererGPU *r, int carIdx, const tColor 
 
     // Each quad: up to 3 faces (front + BACK reversed + FLIP_BACKFACE reversed),
     // each a grid from game_render_hw_write_car_quad, plus the shadow quad
-    _Static_assert(sizeof(MeshVertex) == 12 * sizeof(float),
-                   "game_render_hw_write_car_quad writes 12-float vertices");
-    // Smoothed corner normals for car shine, game coordinates (swizzled below).
+    _Static_assert(sizeof(MeshVertex) == GAME_RENDER_HW_CAR_VERTEX_FLOATS * sizeof(float),
+                   "game_render_hw_write_car_quad writes GAME_RENDER_HW_CAR_VERTEX_FLOATS-float vertices");
+    // Smoothed and bevel corner normals for car shine, game coordinates (swizzled below).
     float (*cornerN)[4][3] = calloc((size_t)numPols, sizeof(*cornerN));
-    if (cornerN)
-        game_render_hw_car_corner_normals(carIdx, GAME_RENDER_HW_SHINE_CREASE_DEG, cornerN);
+    float (*cornerB)[4][3] = calloc((size_t)numPols, sizeof(*cornerB));
+    if (cornerN && cornerB)
+        game_render_hw_car_corner_normals(carIdx, cornerN, cornerB);
+    else {
+        free(cornerN); free(cornerB);
+        cornerN = NULL; cornerB = NULL;
+    }
     MeshVertex *vertices = calloc((size_t)numPols * 3 * GAME_RENDER_HW_QUAD_VERTS + 4, sizeof(MeshVertex));
     uint32 *indices = calloc((size_t)numPols * 3 * GAME_RENDER_HW_QUAD_INDICES + 6, sizeof(uint32));
     int vertCount = 0, idxCount = 0;
@@ -1345,7 +1355,7 @@ void menu_render_gpu_load_car_mesh(MenuRendererGPU *r, int carIdx, const tColor 
             { u1, v0 }, { u0, v0 }, { u0, v1 }, { u1, v1 }
         };
 
-        float pos[4][3], col[4] = { cr, cg, cb, ca }, nrm[4][3] = {{0}};
+        float pos[4][3], col[4] = { cr, cg, cb, ca }, nrm[4][3] = {{0}}, bev[4][3] = {{0}};
         for (int v = 0; v < 4; v++) {
             uint8 vi = pols[p].verts[v];
             if (vi >= numCoords) vi = 0;
@@ -1358,12 +1368,15 @@ void menu_render_gpu_load_car_mesh(MenuRendererGPU *r, int carIdx, const tColor 
                 nrm[v][0] = cornerN[p][v][1];
                 nrm[v][1] = cornerN[p][v][2];
                 nrm[v][2] = cornerN[p][v][0];
+                bev[v][0] = cornerB[p][v][1];
+                bev[v][1] = cornerB[p][v][2];
+                bev[v][2] = cornerB[p][v][0];
             }
         }
 
         // Triangles (0,1,2) and (0,2,3), as a grid
         game_render_hw_write_car_quad(vertices[baseVert].position, &indices[idxCount],
-                                      (uint32)baseVert, pos, uvs, col, nrm, false);
+                                      (uint32)baseVert, pos, uvs, col, nrm, bev, false);
         vertCount += GAME_RENDER_HW_QUAD_VERTS;
         idxCount  += GAME_RENDER_HW_QUAD_INDICES;
 
@@ -1413,7 +1426,7 @@ void menu_render_gpu_load_car_mesh(MenuRendererGPU *r, int carIdx, const tColor 
 
             // Reversed winding: (0,2,1) and (0,3,2), as a grid
             game_render_hw_write_car_quad(vertices[backBase].position, &indices[idxCount],
-                                          (uint32)backBase, pos, back_uvs, bcol, nrm, true);
+                                          (uint32)backBase, pos, back_uvs, bcol, nrm, bev, true);
             vertCount += GAME_RENDER_HW_QUAD_VERTS;
             idxCount  += GAME_RENDER_HW_QUAD_INDICES;
         }
@@ -1475,7 +1488,7 @@ void menu_render_gpu_load_car_mesh(MenuRendererGPU *r, int carIdx, const tColor 
             { u1, v0 }, { u0, v0 }, { u0, v1 }, { u1, v1 }
         };
         int baseVert = vertCount;
-        float pos[4][3], col[4] = { cr, cg, cb, 1.0f }, nrm[4][3] = {{0}};
+        float pos[4][3], col[4] = { cr, cg, cb, 1.0f }, nrm[4][3] = {{0}}, bev[4][3] = {{0}};
         for (int v = 0; v < 4; v++) {
             uint8 vi = pols[p].verts[3 - v];
             if (vi >= numCoords) vi = 0;
@@ -1486,10 +1499,13 @@ void menu_render_gpu_load_car_mesh(MenuRendererGPU *r, int carIdx, const tColor 
                 nrm[v][0] = cornerN[p][3 - v][1];
                 nrm[v][1] = cornerN[p][3 - v][2];
                 nrm[v][2] = cornerN[p][3 - v][0];
+                bev[v][0] = cornerB[p][3 - v][1];
+                bev[v][1] = cornerB[p][3 - v][2];
+                bev[v][2] = cornerB[p][3 - v][0];
             }
         }
         game_render_hw_write_car_quad(vertices[baseVert].position, &indices[idxCount],
-                                      (uint32)baseVert, pos, uvs, col, nrm, false);
+                                      (uint32)baseVert, pos, uvs, col, nrm, bev, false);
         vertCount += GAME_RENDER_HW_QUAD_VERTS;
         idxCount  += GAME_RENDER_HW_QUAD_INDICES;
     }
@@ -1556,6 +1572,7 @@ void menu_render_gpu_load_car_mesh(MenuRendererGPU *r, int carIdx, const tColor 
     free(vertices);
     free(indices);
     free(cornerN);
+    free(cornerB);
 }
 
 void menu_render_gpu_free_car_mesh(MenuRendererGPU *r)

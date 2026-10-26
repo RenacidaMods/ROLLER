@@ -57,6 +57,8 @@ typedef struct
     float afUv[2];
     float afColor[4];
     float afNormal[3];   /* car shine smoothed normal; unused here */
+    float afEdge[2];     /* car shine bevel inputs; unused here */
+    float afBevel[3];
 } tGpuReferenceVertex;
 
 typedef struct
@@ -818,6 +820,8 @@ static bool gpu_reference_depth_check(SDL_GPUDevice *pDevice,
         for (size_t iChannel = 0; iChannel < 4u; iChannel++)
             pGpuVertices[i].afColor[iChannel] = 1.0f;
         memset(pGpuVertices[i].afNormal, 0, sizeof(pGpuVertices[i].afNormal));
+        memset(pGpuVertices[i].afEdge, 0, sizeof(pGpuVertices[i].afEdge));
+        memset(pGpuVertices[i].afBevel, 0, sizeof(pGpuVertices[i].afBevel));
     }
     pVertexBuffer = scene_render_gpu_upload_buffer(
         pDevice, SDL_GPU_BUFFERUSAGE_VERTEX, pGpuVertices,

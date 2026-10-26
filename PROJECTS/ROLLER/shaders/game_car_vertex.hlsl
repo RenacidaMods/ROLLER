@@ -13,6 +13,8 @@ struct VertexInput
     float2 uv       : TEXCOORD1;
     float4 color    : TEXCOORD2;
     float3 normal   : TEXCOORD3;   /* smoothed corner normal (car shine) */
+    float2 edge     : TEXCOORD4;   /* position across the panel, 0..1 each way */
+    float3 bevel    : TEXCOORD5;   /* fully blended corner normal */
 };
 
 struct VertexOutput
@@ -26,6 +28,8 @@ struct VertexOutput
     float3 up       : TEXCOORD5;
     float3 xAxis    : TEXCOORD6;
     float3 smoothN  : TEXCOORD7;
+    float2 edge     : TEXCOORD8;
+    float3 bevelN   : TEXCOORD9;
 };
 
 VertexOutput main(VertexInput input)
@@ -40,5 +44,7 @@ VertexOutput main(VertexInput input)
     output.up       = upObj.xyz;
     output.xAxis    = xAxisObj.xyz;
     output.smoothN  = input.normal;
+    output.edge     = input.edge;
+    output.bevelN   = input.bevel;
     return output;
 }

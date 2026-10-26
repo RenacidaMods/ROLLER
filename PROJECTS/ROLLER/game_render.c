@@ -1249,8 +1249,8 @@ void game_render_set_hud_map_scale(GameRenderer *renderer, float scale) {
 }
 
 void game_render_set_car_shine(GameRenderer *renderer, float strength, float glint, float dark,
-                               float smooth) {
-    if (renderer) scene_render_gpu_set_car_shine(renderer->gpu, strength, glint, dark, smooth);
+                               float smooth, float bevel) {
+    if (renderer) scene_render_gpu_set_car_shine(renderer->gpu, strength, glint, dark, smooth, bevel);
 }
 
 void game_render_hud_message_begin(GameRenderer *renderer) {
@@ -1357,8 +1357,8 @@ void game_render_set_hud_map_scale(GameRenderer *renderer, float scale) {
     (void)renderer; (void)scale;
 }
 void game_render_set_car_shine(GameRenderer *renderer, float strength, float glint, float dark,
-                               float smooth) {
-    (void)renderer; (void)strength; (void)glint; (void)dark; (void)smooth;
+                               float smooth, float bevel) {
+    (void)renderer; (void)strength; (void)glint; (void)dark; (void)smooth; (void)bevel;
 }
 void game_render_hud_message_begin(GameRenderer *renderer) {
     (void)renderer;

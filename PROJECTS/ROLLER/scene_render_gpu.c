@@ -77,6 +77,8 @@ typedef struct {
     float uv[2];
     float color[4];
     float normal[3];   /* smoothed corner normal (car shine), object space */
+    float edge[2];     /* position across the panel (car shine bevel) */
+    float bevel[3];    /* fully blended corner normal, near panel edges */
 } SceneGPUMeshVertex;
 
 /* 2D NDC vertex for HUD blit (positions already in NDC [-1,1]). */
@@ -464,6 +466,7 @@ struct SceneRendererGPU {
     float carGlint;        /* car shine sun glint strength, 0-4; 2.0 = default */
     float carDark;         /* car shine reflected ground/skyline darkness; 1.0 = default */
     float carSmooth;       /* car shine: blend from flat panels (0) to smoothed normals (1) */
+    float carBevel;        /* car shine: width of the rounded strip along panel edges, 0-1 */
     float fovMultiplier;   /* FOV multiplier applied on top of the game camera; 1.0 = native */
     bool  wireframe;       /* render geometry as wireframe */
     int   cullMode;        /* 0=default/none, 1=none, 2=back, 3=front */
@@ -1463,7 +1466,7 @@ static SDL_GPUGraphicsPipeline *make_car_pipeline(SceneRendererGPU *r,
                                                    SDL_GPUSampleCount sc,
                                                    SDL_GPUFillMode fillMode)
 {
-    SDL_GPUVertexAttribute attrs[4] = {
+    SDL_GPUVertexAttribute attrs[6] = {
         {.location=0, .format=SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3,
          .offset=(Uint32)offsetof(SceneGPUMeshVertex, position)},
         {.location=1, .format=SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2,
@@ -1471,7 +1474,11 @@ static SDL_GPUGraphicsPipeline *make_car_pipeline(SceneRendererGPU *r,
         {.location=2, .format=SDL_GPU_VERTEXELEMENTFORMAT_FLOAT4,
          .offset=(Uint32)offsetof(SceneGPUMeshVertex, color)},
         {.location=3, .format=SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3,
-         .offset=(Uint32)offsetof(SceneGPUMeshVertex, normal)}
+         .offset=(Uint32)offsetof(SceneGPUMeshVertex, normal)},
+        {.location=4, .format=SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2,
+         .offset=(Uint32)offsetof(SceneGPUMeshVertex, edge)},
+        {.location=5, .format=SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3,
+         .offset=(Uint32)offsetof(SceneGPUMeshVertex, bevel)}
     };
     SDL_GPUVertexBufferDescription binding = {
         .pitch = sizeof(SceneGPUMeshVertex),
@@ -1495,7 +1502,7 @@ static SDL_GPUGraphicsPipeline *make_car_pipeline(SceneRendererGPU *r,
         .primitive_type = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST,
         .vertex_input_state = {
             .vertex_attributes     = attrs,
-            .num_vertex_attributes = 4,
+            .num_vertex_attributes = 6,
             .vertex_buffer_descriptions = &binding,
             .num_vertex_buffers         = 1
         },
@@ -1534,7 +1541,7 @@ static SDL_GPUGraphicsPipeline *make_car_shadow_pipeline(SceneRendererGPU *r,
                                                           SDL_GPUSampleCount sc,
                                                           SDL_GPUFillMode fillMode)
 {
-    SDL_GPUVertexAttribute attrs[4] = {
+    SDL_GPUVertexAttribute attrs[6] = {
         {.location=0, .format=SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3,
          .offset=(Uint32)offsetof(SceneGPUMeshVertex, position)},
         {.location=1, .format=SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2,
@@ -1542,7 +1549,11 @@ static SDL_GPUGraphicsPipeline *make_car_shadow_pipeline(SceneRendererGPU *r,
         {.location=2, .format=SDL_GPU_VERTEXELEMENTFORMAT_FLOAT4,
          .offset=(Uint32)offsetof(SceneGPUMeshVertex, color)},
         {.location=3, .format=SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3,
-         .offset=(Uint32)offsetof(SceneGPUMeshVertex, normal)}
+         .offset=(Uint32)offsetof(SceneGPUMeshVertex, normal)},
+        {.location=4, .format=SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2,
+         .offset=(Uint32)offsetof(SceneGPUMeshVertex, edge)},
+        {.location=5, .format=SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3,
+         .offset=(Uint32)offsetof(SceneGPUMeshVertex, bevel)}
     };
     SDL_GPUVertexBufferDescription binding = {
         .pitch = sizeof(SceneGPUMeshVertex),
@@ -1566,7 +1577,7 @@ static SDL_GPUGraphicsPipeline *make_car_shadow_pipeline(SceneRendererGPU *r,
         .primitive_type  = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST,
         .vertex_input_state = {
             .vertex_attributes          = attrs,
-            .num_vertex_attributes      = 4,
+            .num_vertex_attributes      = 6,
             .vertex_buffer_descriptions = &binding,
             .num_vertex_buffers         = 1
         },
@@ -1831,6 +1842,7 @@ SceneRendererGPU *scene_render_gpu_create(SDL_GPUDevice *device, SDL_Window *win
     r->carGlint        = 2.0f;
     r->carDark         = 1.0f;
     r->carSmooth       = 1.0f;
+    r->carBevel        = 0.5f;
     r->contrast        = 1.0f;
     r->fovMultiplier   = 1.0f;
     r->skyR = 0.25f; r->skyG = 0.45f; r->skyB = 0.75f;
@@ -2802,7 +2814,7 @@ SDL_GPUTexture *scene_render_gpu_flush_secondary_view(SceneRendererGPU *r, int s
         float fogDensity, gamma, fogStart, saturation;
         float fogColor[4];
         float contrast, brightness;
-        float carShine, carGlint, carDark, carSmooth, _pad[2];  /* car*: game_car_pixel.hlsl only */
+        float carShine, carGlint, carDark, carSmooth, carBevel, _pad;  /* car*: game_car_pixel.hlsl only */
     } pfu = {
         r->fogDensity,
         (r->gamma > 0.0f)       ? r->gamma       : 1.0f,
@@ -2811,7 +2823,7 @@ SDL_GPUTexture *scene_render_gpu_flush_secondary_view(SceneRendererGPU *r, int s
         {r->fogColor[0], r->fogColor[1], r->fogColor[2], r->fogColor[3]},
         (r->contrast > 0.0f)    ? r->contrast     : 1.0f,
         r->brightness,
-        0.0f, r->carGlint, r->carDark, r->carSmooth, {0}
+        0.0f, r->carGlint, r->carDark, r->carSmooth, r->carBevel, 0.0f
     };
     SDL_PushGPUFragmentUniformData(r->cmdBuf, 0, &pfu, sizeof(pfu));
 
@@ -3606,7 +3618,7 @@ static bool scene_render_gpu_end_frame_internal(SceneRendererGPU *r,
         float fogDensity, gamma, fogStart, saturation;
         float fogColor[4];
         float contrast, brightness;
-        float carShine, carGlint, carDark, carSmooth, _pad[2];  /* car*: game_car_pixel.hlsl only */
+        float carShine, carGlint, carDark, carSmooth, carBevel, _pad;  /* car*: game_car_pixel.hlsl only */
     } pfu = {
         r->fogDensity,
         (r->gamma > 0.0f)       ? r->gamma       : 1.0f,
@@ -3615,7 +3627,7 @@ static bool scene_render_gpu_end_frame_internal(SceneRendererGPU *r,
         {r->fogColor[0], r->fogColor[1], r->fogColor[2], r->fogColor[3]},
         (r->contrast > 0.0f)    ? r->contrast     : 1.0f,
         r->brightness,
-        0.0f, r->carGlint, r->carDark, r->carSmooth, {0}
+        0.0f, r->carGlint, r->carDark, r->carSmooth, r->carBevel, 0.0f
     };
     SDL_PushGPUFragmentUniformData(r->cmdBuf, 0, &pfu, sizeof(pfu));
 
@@ -4391,13 +4403,14 @@ void scene_render_gpu_set_hud_scale(SceneRendererGPU *r, float scale)
 }
 
 void scene_render_gpu_set_car_shine(SceneRendererGPU *r, float strength, float glint, float dark,
-                                    float smooth)
+                                    float smooth, float bevel)
 {
     if (!r) return;
     r->carShine = (strength < 0.0f) ? 0.0f : (strength > 2.0f) ? 2.0f : strength;
     r->carGlint = (glint < 0.0f) ? 0.0f : (glint > 4.0f) ? 4.0f : glint;
     r->carDark  = (dark < 0.0f) ? 0.0f : (dark > 1.0f) ? 1.0f : dark;
     r->carSmooth = (smooth < 0.0f) ? 0.0f : (smooth > 1.0f) ? 1.0f : smooth;
+    r->carBevel  = (bevel < 0.0f) ? 0.0f : (bevel > 1.0f) ? 1.0f : bevel;
 }
 
 void scene_render_gpu_set_hud_map_scale(SceneRendererGPU *r, float scale)

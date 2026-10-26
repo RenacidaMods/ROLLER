@@ -47,6 +47,7 @@ extern float g_fAOStrength;      /* AO strength; 1.0 = as computed */
 extern float g_fHUDScale;        /* GPU HUD scale 0.25..1.0; 1.0 = original full-screen HUD */
 extern float g_fCarShine;         /* GPU car shine (environment reflection) strength; 0.0 = off, up to 2.0 */
 extern float g_fCarShineGlint;    /* car shine sun glint, 0.0-4.0; 2.0 = default */
+extern float g_fCarShineBevel;    /* car shine: rounded strip along panel edges, 0.0-1.0; 0.5 = default */
 extern float g_fCarShineSmooth;   /* car shine: flat panels (0.0) to smoothed edges (1.0, default) */
 extern float g_fCarShineDark;     /* car shine reflected ground/skyline darkness, 0.0-1.0; 1.0 = default */
 extern float g_fHUDMapScale;     /* GPU HUD scale for the bottom-left track map; 1.0 = original */

@@ -14,7 +14,7 @@ cbuffer ScenePixelUniforms : register(b0, space3)
     float  carGlint;   /* sun glint strength, 1 = default */
     float  carDark;    /* how dark the reflected ground and skyline are, 1 = default */
     float  carSmooth;  /* flat panels (0) to smoothed corner normals (1, default) */
-    float  _pad1;
+    float  carBevel;   /* width of the rounded strip along panel edges, 0-1 */
     float  _pad2;
 };
 
@@ -29,6 +29,8 @@ struct PixelInput
     float3 up       : TEXCOORD5;
     float3 xAxis    : TEXCOORD6;
     float3 smoothN  : TEXCOORD7;
+    float2 edge     : TEXCOORD8;
+    float3 bevelN   : TEXCOORD9;
 };
 
 /* The surroundings the paint reflects, by direction (unit, world-aligned
@@ -82,6 +84,20 @@ float4 main(PixelInput input) : SV_Target
             float3 S = input.smoothN / sLen;
             if (dot(S, N) < 0.0) S = -S;
             N = normalize(lerp(N, S, carSmooth));
+        }
+        /* Bevel: in a thin strip along the panel's edges (up to 15% of the
+         * panel in from each side at full slider) the normal leans towards
+         * the fully blended corner normal, so even sharp edges catch a
+         * rounded highlight while the panel's middle stays flat. */
+        float  bLen = length(input.bevelN);
+        if (carBevel > 0.0 && bLen > 1e-6)
+        {
+            float2 e  = input.edge;
+            float  d  = min(min(e.x, 1.0 - e.x), min(e.y, 1.0 - e.y));
+            float  bw = 1.0 - smoothstep(0.0, 0.15 * carBevel, d);
+            float3 Bn = input.bevelN / bLen;
+            if (dot(Bn, N) < 0.0) Bn = -Bn;
+            N = normalize(lerp(N, Bn, bw));
         }
         float  ndv = saturate(dot(N, V));
         float3 R   = reflect(-V, N);

@@ -60,27 +60,34 @@ SDL_GPUTexture *game_render_hw_build_car_atlas(SDL_GPUDevice *dev, int carIdx,
  * shared edges get identical vertices (no T-junction cracks).
  *
  * pos/uv corners are in the usual order (triangles 0,1,2 and 0,2,3). verts
- * receives GAME_RENDER_HW_QUAD_VERTS vertices of 12 floats each -- position[3],
+ * receives GAME_RENDER_HW_QUAD_VERTS vertices of GAME_RENDER_HW_CAR_VERTEX_FLOATS
+ * floats each -- position[3],
  * uv[2], color[4], normal[3] (nrm corners blended and normalised; NULL =
- * zero), the layout of both GRHWMeshVertex and the menu's
+ * zero), edge[2] (the grid's s, t across the panel), bevel[3] (bev corners
+ * blended and normalised; NULL = the normal), the layout of both
+ * GRHWMeshVertex and the menu's
  * MeshVertex -- and indices GAME_RENDER_HW_QUAD_INDICES entries offset by
  * baseVert. reverseWinding flips every triangle (a back face). */
 #define GAME_RENDER_HW_QUAD_GRID    4
+#define GAME_RENDER_HW_CAR_VERTEX_FLOATS 17
 #define GAME_RENDER_HW_QUAD_VERTS   ((GAME_RENDER_HW_QUAD_GRID + 1) * (GAME_RENDER_HW_QUAD_GRID + 1))
 #define GAME_RENDER_HW_QUAD_INDICES (GAME_RENDER_HW_QUAD_GRID * GAME_RENDER_HW_QUAD_GRID * 6)
 void game_render_hw_write_car_quad(float *verts, uint32 *indices, uint32 baseVert,
                                    const float pos[4][3], const float uv[4][2],
                                    const float color[4], const float nrm[4][3],
-                                   bool reverseWinding);
+                                   const float bev[4][3], bool reverseWinding);
 
 /* Car shine smoothing: for each polygon of car design designIdx and each of
- * its 4 corners, a normal averaged (by area) over the polygons meeting at
- * that corner whose own normals are within creaseDeg of this polygon's, all
- * pointing away from the car's centre, in the design's game coordinates.
- * out has byNumPols entries. Reflections then blend across edges up to the
- * crease angle, so the low-poly car reads as rounded. */
-#define GAME_RENDER_HW_SHINE_CREASE_DEG 80.0f
-void game_render_hw_car_corner_normals(int designIdx, float creaseDeg, float (*out)[4][3]);
+ * its 4 corners, in the design's game coordinates, all pointing away from
+ * the car's centre:
+ * - outSmooth: area-weighted average of the polygons meeting at that corner,
+ *   each neighbour weighted by the cosine of its angle to this polygon (a
+ *   sliding scale that fades to nothing at 90 degrees);
+ * - outBevel: every polygon there up to 150 degrees, equally, used only in
+ *   a thin strip along panel edges so sharp edges catch a rounded highlight.
+ * Both arrays have byNumPols entries. */
+void game_render_hw_car_corner_normals(int designIdx, float (*outSmooth)[4][3],
+                                       float (*outBevel)[4][3]);
 
 /* Release a texture from game_render_hw_build_car_atlas (HD sheets are shared
  * between cars of the same design). Any other texture is simply released. */
