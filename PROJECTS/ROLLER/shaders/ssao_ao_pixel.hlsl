@@ -39,15 +39,15 @@ static const float3 kKernel[SAMPLE_COUNT] = {
     float3(-0.04, 0.37, 0.88)
 };
 
-// 4x4 Bayer order: the kernel rotation repeats every 4 pixels, so the
-// composite pass's 4x4 blur averages each pixel over all 16 rotations and
-// the sampling noise cancels out instead of showing as grain.
-static const float kBayer4[16] = {
-     0.0,  8.0,  2.0, 10.0,
-    12.0,  4.0, 14.0,  6.0,
-     3.0, 11.0,  1.0,  9.0,
-    15.0,  7.0, 13.0,  5.0
-};
+// Per-pixel kernel rotation from interleaved gradient noise (Jimenez 2014).
+// A repeating 4x4 rotation tile left a faint 4-texel grid after the blur;
+// with the scene drawn larger than the window (render scale) and scaled
+// down, that grid beat into broad bands and a plaid pattern fixed to the
+// screen. This noise doesn't repeat, so what the blur leaves is fine grain.
+float rotationNoise(float2 pixel)
+{
+    return frac(52.9829189 * frac(dot(pixel, float2(0.06711056, 0.00583715))));
+}
 
 float viewZ(float d) { return zB / (d - zF); }
 
@@ -106,9 +106,8 @@ float4 main(PixelInput input) : SV_Target
     if (dot(N, -P) < 0.0)
         N = -N;
 
-    // Per-pixel rotation of the kernel from the 4x4 Bayer pattern.
-    int2 cell = int2(input.position.xy) & 3;
-    float angle = 6.2831853 * (kBayer4[cell.y * 4 + cell.x] + 0.5) / 16.0;
+    // Per-pixel rotation of the kernel (see rotationNoise).
+    float angle = 6.2831853 * rotationNoise(floor(input.position.xy));
     float3 rv = float3(cos(angle), sin(angle), 0.0);
     float3 T = rv - N * dot(rv, N);
     T = (dot(T, T) < 1e-4) ? normalize(cross(N, float3(0.0, 0.0, 1.0)) + 1e-3) : normalize(T);

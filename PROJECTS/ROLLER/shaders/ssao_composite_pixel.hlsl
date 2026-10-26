@@ -1,7 +1,7 @@
 // Screen-space ambient occlusion, pass 2 of 2 (ssao.c): upsamples the
-// half-resolution occlusion with a depth-aware 4x4 blur (matching the
-// 4x4 rotation pattern in ssao_ao_pixel.hlsl, so its noise cancels) and
-// outputs a grey level. The normal pipeline multiplies it into the scene
+// half-resolution occlusion with a depth-aware 4x4 blur (smoothing the
+// per-pixel kernel rotation noise from ssao_ao_pixel.hlsl into fine grain)
+// and outputs a grey level. The normal pipeline multiplies it into the scene
 // colour (dst = src * dst), so 1.0 leaves a pixel untouched; the "AO only"
 // debug pipeline writes it directly.
 

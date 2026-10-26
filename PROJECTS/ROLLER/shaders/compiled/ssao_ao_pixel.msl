@@ -58,8 +58,7 @@ struct type_SSAOUniforms
     float _pad;
 };
 
-constant spvUnsafeArray<float3, 16> _143 = spvUnsafeArray<float3, 16>({ float3(0.5299999713897705078125, 0.14000000059604644775390625, 0.37999999523162841796875), float3(-0.2700000107288360595703125, 0.4799999892711639404296875, 0.20999999344348907470703125), float3(-0.10999999940395355224609375, -0.36000001430511474609375, 0.560000002384185791015625), float3(0.23999999463558197021484375, -0.180000007152557373046875, 0.2199999988079071044921875), float3(0.0599999986588954925537109375, 0.2700000107288360595703125, 0.119999997317790985107421875), float3(-0.4600000083446502685546875, -0.0500000007450580596923828125, 0.3499999940395355224609375), float3(0.37999999523162841796875, 0.519999980926513671875, 0.4699999988079071044921875), float3(-0.62000000476837158203125, 0.310000002384185791015625, 0.579999983310699462890625), float3(0.709999978542327880859375, -0.3300000131130218505859375, 0.2899999916553497314453125), float3(-0.20999999344348907470703125, -0.7400000095367431640625, 0.430000007152557373046875), float3(0.119999997317790985107421875, 0.810000002384185791015625, 0.4799999892711639404296875), float3(-0.85000002384185791015625, -0.37999999523162841796875, 0.2700000107288360595703125), float3(0.17000000178813934326171875, 0.0900000035762786865234375, 0.810000002384185791015625), float3(-0.3400000035762786865234375, -0.20999999344348907470703125, 0.7200000286102294921875), float3(0.579999983310699462890625, -0.61000001430511474609375, 0.4099999964237213134765625), float3(-0.039999999105930328369140625, 0.37000000476837158203125, 0.87999999523162841796875) });
-constant spvUnsafeArray<float, 16> _144 = spvUnsafeArray<float, 16>({ 0.0, 8.0, 2.0, 10.0, 12.0, 4.0, 14.0, 6.0, 3.0, 11.0, 1.0, 9.0, 15.0, 7.0, 13.0, 5.0 });
+constant spvUnsafeArray<float3, 16> _132 = spvUnsafeArray<float3, 16>({ float3(0.5299999713897705078125, 0.14000000059604644775390625, 0.37999999523162841796875), float3(-0.2700000107288360595703125, 0.4799999892711639404296875, 0.20999999344348907470703125), float3(-0.10999999940395355224609375, -0.36000001430511474609375, 0.560000002384185791015625), float3(0.23999999463558197021484375, -0.180000007152557373046875, 0.2199999988079071044921875), float3(0.0599999986588954925537109375, 0.2700000107288360595703125, 0.119999997317790985107421875), float3(-0.4600000083446502685546875, -0.0500000007450580596923828125, 0.3499999940395355224609375), float3(0.37999999523162841796875, 0.519999980926513671875, 0.4699999988079071044921875), float3(-0.62000000476837158203125, 0.310000002384185791015625, 0.579999983310699462890625), float3(0.709999978542327880859375, -0.3300000131130218505859375, 0.2899999916553497314453125), float3(-0.20999999344348907470703125, -0.7400000095367431640625, 0.430000007152557373046875), float3(0.119999997317790985107421875, 0.810000002384185791015625, 0.4799999892711639404296875), float3(-0.85000002384185791015625, -0.37999999523162841796875, 0.2700000107288360595703125), float3(0.17000000178813934326171875, 0.0900000035762786865234375, 0.810000002384185791015625), float3(-0.3400000035762786865234375, -0.20999999344348907470703125, 0.7200000286102294921875), float3(0.579999983310699462890625, -0.61000001430511474609375, 0.4099999964237213134765625), float3(-0.039999999105930328369140625, 0.37000000476837158203125, 0.87999999523162841796875) });
 
 struct main0_out
 {
@@ -74,192 +73,191 @@ struct main0_in
 fragment main0_out main0(main0_in in [[stage_in]], constant type_SSAOUniforms& SSAOUniforms [[buffer(0)]], texture2d<float> depthTex [[texture(0)]], float4 gl_FragCoord [[position]])
 {
     main0_out out = {};
-    float4 _597;
+    float4 _580;
     do
     {
-        float2 _158 = SSAOUniforms.depthSize - float2(1.0);
-        float4 _166 = depthTex.read(uint2(int3(int2(fast::clamp(in.in_var_TEXCOORD0 * SSAOUniforms.depthSize, float2(0.0), _158)), 0).xy), 0);
-        float _167 = _166.x;
-        if (_167 >= 0.99999988079071044921875)
+        float2 _145 = SSAOUniforms.depthSize - float2(1.0);
+        float4 _153 = depthTex.read(uint2(int3(int2(fast::clamp(in.in_var_TEXCOORD0 * SSAOUniforms.depthSize, float2(0.0), _145)), 0).xy), 0);
+        float _154 = _153.x;
+        if (_154 >= 0.99999988079071044921875)
         {
-            _597 = float4(1.0);
+            _580 = float4(1.0);
             break;
         }
-        float _176 = SSAOUniforms.zB / (_167 - SSAOUniforms.zF);
-        float3 _196 = float3((((in.in_var_TEXCOORD0.x * 2.0) - 1.0) * _176) / SSAOUniforms.fov.x, (((1.0 - (in.in_var_TEXCOORD0.y * 2.0)) - SSAOUniforms.shiftY) * _176) / SSAOUniforms.fov.y, _176);
-        float2 _197 = float2(1.0) / SSAOUniforms.depthSize;
-        float2 _199 = float2(_197.x, 0.0);
-        float2 _200 = in.in_var_TEXCOORD0 + _199;
-        float _212 = SSAOUniforms.zB / (depthTex.read(uint2(int3(int2(fast::clamp(_200 * SSAOUniforms.depthSize, float2(0.0), _158)), 0).xy), 0).x - SSAOUniforms.zF);
-        float2 _225 = in.in_var_TEXCOORD0 - _199;
-        float _237 = SSAOUniforms.zB / (depthTex.read(uint2(int3(int2(fast::clamp(_225 * SSAOUniforms.depthSize, float2(0.0), _158)), 0).xy), 0).x - SSAOUniforms.zF);
-        bool _254 = abs(_212 - _176) < abs(_176 - _237);
-        float3 _260;
-        if (_254)
+        float _163 = SSAOUniforms.zB / (_154 - SSAOUniforms.zF);
+        float3 _183 = float3((((in.in_var_TEXCOORD0.x * 2.0) - 1.0) * _163) / SSAOUniforms.fov.x, (((1.0 - (in.in_var_TEXCOORD0.y * 2.0)) - SSAOUniforms.shiftY) * _163) / SSAOUniforms.fov.y, _163);
+        float2 _184 = float2(1.0) / SSAOUniforms.depthSize;
+        float2 _186 = float2(_184.x, 0.0);
+        float2 _187 = in.in_var_TEXCOORD0 + _186;
+        float _199 = SSAOUniforms.zB / (depthTex.read(uint2(int3(int2(fast::clamp(_187 * SSAOUniforms.depthSize, float2(0.0), _145)), 0).xy), 0).x - SSAOUniforms.zF);
+        float2 _212 = in.in_var_TEXCOORD0 - _186;
+        float _224 = SSAOUniforms.zB / (depthTex.read(uint2(int3(int2(fast::clamp(_212 * SSAOUniforms.depthSize, float2(0.0), _145)), 0).xy), 0).x - SSAOUniforms.zF);
+        bool _241 = abs(_199 - _163) < abs(_163 - _224);
+        float3 _247;
+        if (_241)
         {
-            _260 = float3((((_200.x * 2.0) - 1.0) * _212) / SSAOUniforms.fov.x, (((1.0 - (_200.y * 2.0)) - SSAOUniforms.shiftY) * _212) / SSAOUniforms.fov.y, _212) - _196;
+            _247 = float3((((_187.x * 2.0) - 1.0) * _199) / SSAOUniforms.fov.x, (((1.0 - (_187.y * 2.0)) - SSAOUniforms.shiftY) * _199) / SSAOUniforms.fov.y, _199) - _183;
         }
         else
         {
-            _260 = _196 - float3((((_225.x * 2.0) - 1.0) * _237) / SSAOUniforms.fov.x, (((1.0 - (_225.y * 2.0)) - SSAOUniforms.shiftY) * _237) / SSAOUniforms.fov.y, _237);
+            _247 = _183 - float3((((_212.x * 2.0) - 1.0) * _224) / SSAOUniforms.fov.x, (((1.0 - (_212.y * 2.0)) - SSAOUniforms.shiftY) * _224) / SSAOUniforms.fov.y, _224);
         }
-        float2 _267;
-        if (_254)
+        float2 _254;
+        if (_241)
         {
-            _267 = _199 * 3.0;
-        }
-        else
-        {
-            _267 = (-_199) * 3.0;
-        }
-        float2 _268 = in.in_var_TEXCOORD0 + _267;
-        float _280 = SSAOUniforms.zB / (depthTex.read(uint2(int3(int2(fast::clamp(_268 * SSAOUniforms.depthSize, float2(0.0), _158)), 0).xy), 0).x - SSAOUniforms.zF);
-        float3 _292 = float3((((_268.x * 2.0) - 1.0) * _280) / SSAOUniforms.fov.x, (((1.0 - (_268.y * 2.0)) - SSAOUniforms.shiftY) * _280) / SSAOUniforms.fov.y, _280);
-        float3 _298;
-        if (_254)
-        {
-            _298 = _292 - _196;
+            _254 = _186 * 3.0;
         }
         else
         {
-            _298 = _196 - _292;
+            _254 = (-_186) * 3.0;
         }
-        float _306 = _176 * 0.00200000009499490261077880859375;
-        float3 _313;
-        if (abs(_298.z - (3.0 * _260.z)) < precise::max(abs(_260.z) * 1.5, _306))
+        float2 _255 = in.in_var_TEXCOORD0 + _254;
+        float _267 = SSAOUniforms.zB / (depthTex.read(uint2(int3(int2(fast::clamp(_255 * SSAOUniforms.depthSize, float2(0.0), _145)), 0).xy), 0).x - SSAOUniforms.zF);
+        float3 _279 = float3((((_255.x * 2.0) - 1.0) * _267) / SSAOUniforms.fov.x, (((1.0 - (_255.y * 2.0)) - SSAOUniforms.shiftY) * _267) / SSAOUniforms.fov.y, _267);
+        float3 _285;
+        if (_241)
         {
-            _313 = _298 * float3(0.3333333432674407958984375);
-        }
-        else
-        {
-            _313 = _260;
-        }
-        float2 _315 = float2(0.0, _197.y);
-        float2 _316 = in.in_var_TEXCOORD0 + _315;
-        float _328 = SSAOUniforms.zB / (depthTex.read(uint2(int3(int2(fast::clamp(_316 * SSAOUniforms.depthSize, float2(0.0), _158)), 0).xy), 0).x - SSAOUniforms.zF);
-        float2 _341 = in.in_var_TEXCOORD0 - _315;
-        float _353 = SSAOUniforms.zB / (depthTex.read(uint2(int3(int2(fast::clamp(_341 * SSAOUniforms.depthSize, float2(0.0), _158)), 0).xy), 0).x - SSAOUniforms.zF);
-        bool _370 = abs(_328 - _176) < abs(_176 - _353);
-        float3 _376;
-        if (_370)
-        {
-            _376 = float3((((_316.x * 2.0) - 1.0) * _328) / SSAOUniforms.fov.x, (((1.0 - (_316.y * 2.0)) - SSAOUniforms.shiftY) * _328) / SSAOUniforms.fov.y, _328) - _196;
+            _285 = _279 - _183;
         }
         else
         {
-            _376 = _196 - float3((((_341.x * 2.0) - 1.0) * _353) / SSAOUniforms.fov.x, (((1.0 - (_341.y * 2.0)) - SSAOUniforms.shiftY) * _353) / SSAOUniforms.fov.y, _353);
+            _285 = _183 - _279;
         }
-        float2 _383;
-        if (_370)
+        float _293 = _163 * 0.00200000009499490261077880859375;
+        float3 _300;
+        if (abs(_285.z - (3.0 * _247.z)) < precise::max(abs(_247.z) * 1.5, _293))
         {
-            _383 = _315 * 3.0;
-        }
-        else
-        {
-            _383 = (-_315) * 3.0;
-        }
-        float2 _384 = in.in_var_TEXCOORD0 + _383;
-        float _396 = SSAOUniforms.zB / (depthTex.read(uint2(int3(int2(fast::clamp(_384 * SSAOUniforms.depthSize, float2(0.0), _158)), 0).xy), 0).x - SSAOUniforms.zF);
-        float3 _408 = float3((((_384.x * 2.0) - 1.0) * _396) / SSAOUniforms.fov.x, (((1.0 - (_384.y * 2.0)) - SSAOUniforms.shiftY) * _396) / SSAOUniforms.fov.y, _396);
-        float3 _414;
-        if (_370)
-        {
-            _414 = _408 - _196;
+            _300 = _285 * float3(0.3333333432674407958984375);
         }
         else
         {
-            _414 = _196 - _408;
+            _300 = _247;
         }
-        float3 _428;
-        if (abs(_414.z - (3.0 * _376.z)) < precise::max(abs(_376.z) * 1.5, _306))
+        float2 _302 = float2(0.0, _184.y);
+        float2 _303 = in.in_var_TEXCOORD0 + _302;
+        float _315 = SSAOUniforms.zB / (depthTex.read(uint2(int3(int2(fast::clamp(_303 * SSAOUniforms.depthSize, float2(0.0), _145)), 0).xy), 0).x - SSAOUniforms.zF);
+        float2 _328 = in.in_var_TEXCOORD0 - _302;
+        float _340 = SSAOUniforms.zB / (depthTex.read(uint2(int3(int2(fast::clamp(_328 * SSAOUniforms.depthSize, float2(0.0), _145)), 0).xy), 0).x - SSAOUniforms.zF);
+        bool _357 = abs(_315 - _163) < abs(_163 - _340);
+        float3 _363;
+        if (_357)
         {
-            _428 = _414 * float3(0.3333333432674407958984375);
-        }
-        else
-        {
-            _428 = _376;
-        }
-        float3 _430 = fast::normalize(cross(_313, _428));
-        float3 _437;
-        if (dot(_430, -_196) < 0.0)
-        {
-            _437 = -_430;
+            _363 = float3((((_303.x * 2.0) - 1.0) * _315) / SSAOUniforms.fov.x, (((1.0 - (_303.y * 2.0)) - SSAOUniforms.shiftY) * _315) / SSAOUniforms.fov.y, _315) - _183;
         }
         else
         {
-            _437 = _430;
+            _363 = _183 - float3((((_328.x * 2.0) - 1.0) * _340) / SSAOUniforms.fov.x, (((1.0 - (_328.y * 2.0)) - SSAOUniforms.shiftY) * _340) / SSAOUniforms.fov.y, _340);
         }
-        int2 _440 = int2(gl_FragCoord.xy) & int2(3);
-        float _448 = (_144[(_440.y * 4) + _440.x] + 0.5) * 0.3926990926265716552734375;
-        float3 _451 = float3(cos(_448), sin(_448), 0.0);
-        float3 _454 = _451 - (_437 * dot(_451, _437));
-        float3 _464;
-        if (dot(_454, _454) < 9.9999997473787516355514526367188e-05)
+        float2 _370;
+        if (_357)
         {
-            _464 = fast::normalize(cross(_437, float3(0.0, 0.0, 1.0)) + float3(0.001000000047497451305389404296875));
+            _370 = _302 * 3.0;
         }
         else
         {
-            _464 = fast::normalize(_454);
+            _370 = (-_302) * 3.0;
         }
-        float3 _465 = cross(_437, _464);
-        float _476 = precise::min(SSAOUniforms.radius, (0.0599999986588954925537109375 * SSAOUniforms.depthSize.x) / precise::max(((SSAOUniforms.fov.x * 0.5) * SSAOUniforms.depthSize.x) / _176, 9.9999999747524270787835121154785e-07));
-        float _479 = precise::max(_476 * 0.02999999932944774627685546875, _176 * 0.00150000001303851604461669921875);
-        float _481;
-        float _484;
-        _481 = 0.0;
-        _484 = 0.0;
-        float _482;
-        float _485;
-        for (int _486 = 0; _486 < 16; _481 = _482, _484 = _485, _486++)
+        float2 _371 = in.in_var_TEXCOORD0 + _370;
+        float _383 = SSAOUniforms.zB / (depthTex.read(uint2(int3(int2(fast::clamp(_371 * SSAOUniforms.depthSize, float2(0.0), _145)), 0).xy), 0).x - SSAOUniforms.zF);
+        float3 _395 = float3((((_371.x * 2.0) - 1.0) * _383) / SSAOUniforms.fov.x, (((1.0 - (_371.y * 2.0)) - SSAOUniforms.shiftY) * _383) / SSAOUniforms.fov.y, _383);
+        float3 _401;
+        if (_357)
         {
-            float3 _502 = _196 + ((((_464 * _143[_486].x) + (_465 * _143[_486].y)) + (_437 * _143[_486].z)) * _476);
-            float _503 = _502.z;
-            if (_503 <= SSAOUniforms.zNear)
+            _401 = _395 - _183;
+        }
+        else
+        {
+            _401 = _183 - _395;
+        }
+        float3 _415;
+        if (abs(_401.z - (3.0 * _363.z)) < precise::max(abs(_363.z) * 1.5, _293))
+        {
+            _415 = _401 * float3(0.3333333432674407958984375);
+        }
+        else
+        {
+            _415 = _363;
+        }
+        float3 _417 = fast::normalize(cross(_300, _415));
+        float3 _424;
+        if (dot(_417, -_183) < 0.0)
+        {
+            _424 = -_417;
+        }
+        else
+        {
+            _424 = _417;
+        }
+        float _431 = 6.283185482025146484375 * fract(52.98291778564453125 * fract(dot(floor(gl_FragCoord.xy), float2(0.067110560834407806396484375, 0.005837149918079376220703125))));
+        float3 _434 = float3(cos(_431), sin(_431), 0.0);
+        float3 _437 = _434 - (_424 * dot(_434, _424));
+        float3 _447;
+        if (dot(_437, _437) < 9.9999997473787516355514526367188e-05)
+        {
+            _447 = fast::normalize(cross(_424, float3(0.0, 0.0, 1.0)) + float3(0.001000000047497451305389404296875));
+        }
+        else
+        {
+            _447 = fast::normalize(_437);
+        }
+        float3 _448 = cross(_424, _447);
+        float _459 = precise::min(SSAOUniforms.radius, (0.0599999986588954925537109375 * SSAOUniforms.depthSize.x) / precise::max(((SSAOUniforms.fov.x * 0.5) * SSAOUniforms.depthSize.x) / _163, 9.9999999747524270787835121154785e-07));
+        float _462 = precise::max(_459 * 0.02999999932944774627685546875, _163 * 0.00150000001303851604461669921875);
+        float _464;
+        float _467;
+        _464 = 0.0;
+        _467 = 0.0;
+        float _465;
+        float _468;
+        for (int _469 = 0; _469 < 16; _464 = _465, _467 = _468, _469++)
+        {
+            float3 _485 = _183 + ((((_447 * _132[_469].x) + (_448 * _132[_469].y)) + (_424 * _132[_469].z)) * _459);
+            float _486 = _485.z;
+            if (_486 <= SSAOUniforms.zNear)
             {
-                _482 = _481;
-                _485 = _484;
+                _465 = _464;
+                _468 = _467;
                 continue;
             }
-            float _517 = (((SSAOUniforms.fov.x * _502.x) / _503) * 0.5) + 0.5;
-            float _519 = 0.5 - ((((SSAOUniforms.fov.y * _502.y) / _503) + SSAOUniforms.shiftY) * 0.5);
-            float2 _520 = float2(_517, _519);
-            bool _528;
-            if (!any(_520 < float2(0.0)))
+            float _500 = (((SSAOUniforms.fov.x * _485.x) / _486) * 0.5) + 0.5;
+            float _502 = 0.5 - ((((SSAOUniforms.fov.y * _485.y) / _486) + SSAOUniforms.shiftY) * 0.5);
+            float2 _503 = float2(_500, _502);
+            bool _511;
+            if (!any(_503 < float2(0.0)))
             {
-                _528 = any(_520 > float2(1.0));
+                _511 = any(_503 > float2(1.0));
             }
             else
             {
-                _528 = true;
+                _511 = true;
             }
-            if (_528)
+            if (_511)
             {
-                _482 = _481;
-                _485 = _484;
+                _465 = _464;
+                _468 = _467;
                 continue;
             }
-            float _542 = SSAOUniforms.zB / (depthTex.read(uint2(int3(int2(fast::clamp(_520 * SSAOUniforms.depthSize, float2(0.0), _158)), 0).xy), 0).x - SSAOUniforms.zF);
-            float3 _559 = float3((((_517 * 2.0) - 1.0) * _542) / SSAOUniforms.fov.x, (((1.0 - (_519 * 2.0)) - SSAOUniforms.shiftY) * _542) / SSAOUniforms.fov.y, _542) - _196;
-            float _560 = dot(_559, _437);
-            float _568 = precise::max(_476 * 0.07999999821186065673828125, _306);
-            _482 = _481 + (((float(_542 <= (_503 - _479)) * smoothstep(0.0, 1.0, _476 / precise::max(abs(_176 - _542), 0.001000000047497451305389404296875))) * fast::clamp(((_560 / precise::max(length(_559), 0.001000000047497451305389404296875)) - 0.300000011920928955078125) * 2.5, 0.0, 1.0)) * fast::clamp((_560 - _568) / _568, 0.0, 1.0));
-            _485 = _484 + 1.0;
+            float _525 = SSAOUniforms.zB / (depthTex.read(uint2(int3(int2(fast::clamp(_503 * SSAOUniforms.depthSize, float2(0.0), _145)), 0).xy), 0).x - SSAOUniforms.zF);
+            float3 _542 = float3((((_500 * 2.0) - 1.0) * _525) / SSAOUniforms.fov.x, (((1.0 - (_502 * 2.0)) - SSAOUniforms.shiftY) * _525) / SSAOUniforms.fov.y, _525) - _183;
+            float _543 = dot(_542, _424);
+            float _551 = precise::max(_459 * 0.07999999821186065673828125, _293);
+            _465 = _464 + (((float(_525 <= (_486 - _462)) * smoothstep(0.0, 1.0, _459 / precise::max(abs(_163 - _525), 0.001000000047497451305389404296875))) * fast::clamp(((_543 / precise::max(length(_542), 0.001000000047497451305389404296875)) - 0.300000011920928955078125) * 2.5, 0.0, 1.0)) * fast::clamp((_543 - _551) / _551, 0.0, 1.0));
+            _468 = _467 + 1.0;
         }
-        float _585;
-        if (_484 >= 4.0)
+        float _568;
+        if (_467 >= 4.0)
         {
-            _585 = 1.0 - (_481 / _484);
+            _568 = 1.0 - (_464 / _467);
         }
         else
         {
-            _585 = 1.0;
+            _568 = 1.0;
         }
-        float _595 = mix(_585, 1.0, fast::clamp((_176 - SSAOUniforms.fadeStart) / precise::max(SSAOUniforms.fadeEnd - SSAOUniforms.fadeStart, 1.0), 0.0, 1.0));
-        _597 = float4(_595, _595, _595, 1.0);
+        float _578 = mix(_568, 1.0, fast::clamp((_163 - SSAOUniforms.fadeStart) / precise::max(SSAOUniforms.fadeEnd - SSAOUniforms.fadeStart, 1.0), 0.0, 1.0));
+        _580 = float4(_578, _578, _578, 1.0);
         break;
     } while(false);
-    out.out_var_SV_Target = _597;
+    out.out_var_SV_Target = _580;
     return out;
 }
 
