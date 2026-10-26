@@ -11,7 +11,11 @@ cbuffer ScenePixelUniforms : register(b0, space3)
     float  contrast;
     float  brightness;
     float  carShine;   /* 0 = off (and always 0 for car shadows) */
-    float  _pad;
+    float  carGlint;   /* sun glint strength, 1 = default */
+    float  carDark;    /* how dark the reflected ground and skyline are, 1 = default */
+    float  _pad0;
+    float  _pad1;
+    float  _pad2;
 };
 
 struct PixelInput
@@ -31,7 +35,7 @@ struct PixelInput
  * block "buildings" along the horizon, darker ground below. The sharp
  * horizon and skyline edges are what slide across the panels as the car
  * turns, the classic env-mapped car look (Screamer, Need for Speed II). */
-float3 car_environment(float el, float az, float elWidth)
+float3 car_environment(float el, float az, float elWidth, float dark)
 {
     float3 horizon = float3(0.86, 0.89, 0.93);
     float3 zenith  = float3(0.22, 0.42, 0.82);
@@ -40,10 +44,11 @@ float3 car_environment(float el, float az, float elWidth)
     float cell     = floor((az / 6.2831853 + 0.5) * 28.0);
     float building = 0.025 + 0.11 * frac(sin(cell * 12.9898) * 43758.5453);
     float inSky    = saturate((el - building) / elWidth + 0.5);
-    float3 skyline = float3(0.16, 0.17, 0.20);
+    float3 skyline = lerp(horizon * 0.9, float3(0.16, 0.17, 0.20), dark);
     float3 above   = lerp(skyline, sky, inSky);
 
     float3 ground  = lerp(float3(0.30, 0.29, 0.27), float3(0.10, 0.10, 0.11), saturate(-el * 3.0));
+    ground = lerp(horizon * 0.85, ground, dark);
     float aboveHorizon = saturate(el / elWidth + 0.5);
     return lerp(ground, above, aboveHorizon);
 }
@@ -77,13 +82,13 @@ float4 main(PixelInput input) : SV_Target
         float  az  = atan2(dot(R, ey), dot(R, ex));
         float  elWidth = max(fwidth(el), 0.002);
 
-        env = car_environment(el, az, elWidth);
+        env = car_environment(el, az, elWidth, saturate(carDark));
         float fresnel = 0.25 + 0.75 * pow(1.0 - saturate(ndv), 4.0);
         k = saturate(carShine * 0.6 * fresnel);
 
         float3 sunDir = normalize(ex * 0.60 + ey * 0.45 + up * 0.66);
         float  sd     = saturate(dot(R, sunDir));
-        glint = (pow(sd, 400.0) * 3.0 + pow(sd, 24.0) * 0.25) * saturate(carShine);
+        glint = (pow(sd, 400.0) * 3.0 + pow(sd, 24.0) * 0.25) * saturate(carShine) * carGlint;
     }
 
     float4 texColor   = meshTexture.Sample(meshSampler, input.uv);

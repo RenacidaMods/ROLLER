@@ -157,9 +157,10 @@ uint8 **scene_render_gpu_load_hd_bank_tiles(int tex_idx, int numTiles, int tileS
 /* Separate scale (0.25..1.0) for HUD pieces pinned to the bottom-left
  * corner, where the game's HUD keeps the track map. */
 void scene_render_gpu_set_hud_map_scale(SceneRendererGPU *r, float scale);
-/* Car shine strength (0 = off, up to 2): rim light where panels turn away
- * from the camera plus sky gloss on upward-facing panels. */
-void scene_render_gpu_set_car_shine(SceneRendererGPU *r, float strength);
+/* Car shine: race cars reflect a sky/skyline/ground environment. strength
+ * 0 = off, up to 2; glint = sun glint, 0 to 2 (1 default); dark = how dark
+ * the reflected ground and skyline are, 0 to 1 (1 default). */
+void scene_render_gpu_set_car_shine(SceneRendererGPU *r, float strength, float glint, float dark);
 /* Set each frame: while an in-race menu is drawn on the HUD, HUD scale is
  * suspended so the menu isn't split into separately scaled pieces. */
 void scene_render_gpu_set_hud_menu_open(SceneRendererGPU *r, bool open);

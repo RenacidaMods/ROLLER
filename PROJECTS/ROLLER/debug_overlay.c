@@ -1129,7 +1129,29 @@ static void DrawLookSettings(struct nk_context *pCtx, bool bGPU) {
     float fNewShine = nk_slide_float(pCtx, 0.0f, g_fCarShine, 2.0f, 0.05f);
     if (fNewShine != g_fCarShine) {
       g_fCarShine = fNewShine;
-      game_render_set_car_shine(g_pGameRenderer, g_fCarShine);
+      game_render_set_car_shine(g_pGameRenderer, g_fCarShine, g_fCarShineGlint, g_fCarShineDark);
+      InputSaveConfig();
+    }
+  }
+
+  { char buf[24]; snprintf(buf, sizeof(buf), "Shine glint %.0f%%", g_fCarShineGlint * 100.0f);
+    nk_layout_row_dynamic(pCtx, DEBUG_ROW_H, 2);
+    nk_label(pCtx, buf, NK_TEXT_LEFT);
+    float fNewGlint = nk_slide_float(pCtx, 0.0f, g_fCarShineGlint, 2.0f, 0.05f);
+    if (fNewGlint != g_fCarShineGlint) {
+      g_fCarShineGlint = fNewGlint;
+      game_render_set_car_shine(g_pGameRenderer, g_fCarShine, g_fCarShineGlint, g_fCarShineDark);
+      InputSaveConfig();
+    }
+  }
+
+  { char buf[28]; snprintf(buf, sizeof(buf), "Shine darkness %.0f%%", g_fCarShineDark * 100.0f);
+    nk_layout_row_dynamic(pCtx, DEBUG_ROW_H, 2);
+    nk_label(pCtx, buf, NK_TEXT_LEFT);
+    float fNewDark = nk_slide_float(pCtx, 0.0f, g_fCarShineDark, 1.0f, 0.05f);
+    if (fNewDark != g_fCarShineDark) {
+      g_fCarShineDark = fNewDark;
+      game_render_set_car_shine(g_pGameRenderer, g_fCarShine, g_fCarShineGlint, g_fCarShineDark);
       InputSaveConfig();
     }
   }
@@ -1709,7 +1731,7 @@ static void DrawDebugPanel(DebugOverlay *pOverlay) {
         g_fFovMultiplier  = 1.0f;  g_fVigStrength    = 0.0f;
         g_bAmbientOcclusion = false; g_fAORadius = 400.0f; g_fAOStrength = 1.0f;
         g_fHUDScale       = 1.0f;  g_fHUDMapScale    = 1.0f;
-        g_fCarShine       = 0.0f;
+        g_fCarShine       = 0.0f;  g_fCarShineGlint  = 1.0f;  g_fCarShineDark = 1.0f;
         g_fMirrorFov      = 0.75f;
         g_fBrightness     = 0.0f;  g_fContrast       = 1.0f;
         g_fGamma          = 1.0f;  g_fSaturation     = 1.0f;
@@ -1734,7 +1756,7 @@ static void DrawDebugPanel(DebugOverlay *pOverlay) {
                                           g_fAORadius, g_fAOStrength);
         game_render_set_hud_scale(g_pGameRenderer,       g_fHUDScale);
         game_render_set_hud_map_scale(g_pGameRenderer,   g_fHUDMapScale);
-        game_render_set_car_shine(g_pGameRenderer,       g_fCarShine);
+        game_render_set_car_shine(g_pGameRenderer,       g_fCarShine, g_fCarShineGlint, g_fCarShineDark);
         game_render_set_brightness(g_pGameRenderer,      g_fBrightness);
         game_render_set_contrast(g_pGameRenderer,        g_fContrast);
         game_render_set_gamma(g_pGameRenderer,           g_fGamma);

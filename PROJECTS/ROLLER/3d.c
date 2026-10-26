@@ -3928,7 +3928,7 @@ void play_game_init()
   game_render_set_ambient_occlusion(g_pGameRenderer, g_bAmbientOcclusion, g_fAORadius, g_fAOStrength);
   game_render_set_hud_scale(g_pGameRenderer, g_fHUDScale);
   game_render_set_hud_map_scale(g_pGameRenderer, g_fHUDMapScale);
-  game_render_set_car_shine(g_pGameRenderer, g_fCarShine);
+  game_render_set_car_shine(g_pGameRenderer, g_fCarShine, g_fCarShineGlint, g_fCarShineDark);
   game_render_set_brightness(g_pGameRenderer, g_fBrightness);
   game_render_set_fov_multiplier(g_pGameRenderer, g_fFovMultiplier);
   game_render_set_emulate_software_track_borders(g_pGameRenderer, g_bEmulateSoftwareTrackBorders);
