@@ -344,10 +344,16 @@ static uint32 resolve_car_tex(uint32 rawTex, tAnimation *pAnms, int animFrame, i
 static bool build_car_mesh(SDL_GPUDevice *dev, int carIdx,
                             const tColor *pal, GRHWCarMesh *out)
 {
-    int numTiles = 0, atlasH = 0;
-    out->atlas = game_render_hw_build_car_atlas(dev, carIdx, pal, &numTiles, &atlasH, NULL);
+    int numTiles = 0, atlasH = 0, atlasScale = 1;
+    out->atlas = game_render_hw_build_car_atlas(dev, carIdx, pal, &numTiles, &atlasH, &atlasScale);
     bool hasAtlas = (out->atlas != NULL && numTiles > 0);
     float fAtlasH = hasAtlas ? (float)atlasH : 1.0f;
+    /* HD sheets are sampled with filtering and mipmaps, which reach past a
+     * tile's edge into its neighbour on the sheet (a square outline round
+     * the see-through wheel corners). Pull each tile's UVs 2 HD texels in;
+     * the original-size sheet keeps its exact mapping. */
+    float insetU = atlasScale > 1 ? 2.0f / (256.0f * atlasScale) : 0.0f;
+    float insetV = atlasScale > 1 ? 2.0f / (fAtlasH * atlasScale) : 0.0f;
 
     int designIdx = (carIdx >= 0 && carIdx < 16) ? (int)Car[carIdx].byCarDesignIdx : 0;
     if (designIdx < 0 || designIdx > CAR_DESIGN_DEATH) designIdx = 0;
@@ -401,6 +407,7 @@ static bool build_car_mesh(SDL_GPUDevice *dev, int carIdx,
             u1 = ((col + 1) * 64.0f) / 256.0f;
             v0 = (row * 64.0f) / fAtlasH;
             v1 = ((row + 1) * 64.0f) / fAtlasH;
+            u0 += insetU; u1 -= insetU; v0 += insetV; v1 -= insetV;
             if (tex & SURFACE_FLAG_FLIP_HORIZ) { float t = u0; u0 = u1; u1 = t; }
             if (tex & SURFACE_FLAG_FLIP_VERT)  { float t = v0; v0 = v1; v1 = t; }
             cr = cg = cb = ca = 1.0f;
@@ -473,6 +480,7 @@ static bool build_car_mesh(SDL_GPUDevice *dev, int carIdx,
             u1b = ((col + 1) * 64.0f) / 256.0f;
             v0b = (row * 64.0f) / fAtlasH;
             v1b = ((row + 1) * 64.0f) / fAtlasH;
+            u0b += insetU; u1b -= insetU; v0b += insetV; v1b -= insetV;
             if (tex & SURFACE_FLAG_FLIP_HORIZ) { float t = u0b; u0b = u1b; u1b = t; }
             if (tex & SURFACE_FLAG_FLIP_VERT)  { float t = v0b; v0b = v1b; v1b = t; }
             crb = cgb = cbb = cab = 1.0f;

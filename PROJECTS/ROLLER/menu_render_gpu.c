@@ -1159,6 +1159,12 @@ void menu_render_gpu_load_car_mesh(MenuRendererGPU *r, int carIdx, const tColor 
                                                  &numTiles, &atlasH, &atlasScale);
     bool hasAtlas = (atlas != NULL && numTiles > 0);
     float fAtlasH = hasAtlas ? (float)atlasH : 1.0f;
+    /* HD sheets are sampled with filtering and mipmaps, which reach past a
+     * tile's edge into its neighbour on the sheet (a square outline round
+     * the see-through wheel corners). Pull each tile's UVs 2 HD texels in;
+     * the original-size sheet keeps its exact mapping. */
+    float insetU = atlasScale > 1 ? 2.0f / (256.0f * atlasScale) : 0.0f;
+    float insetV = atlasScale > 1 ? 2.0f / (fAtlasH * atlasScale) : 0.0f;
 
     // White pixel UV (center of bottom row, for flat-colored polygons)
     float whiteU = hasAtlas ? 0.5f / 256.0f : 0.0f;
@@ -1198,6 +1204,7 @@ void menu_render_gpu_load_car_mesh(MenuRendererGPU *r, int carIdx, const tColor 
             u1 = ((col + 1) * 64.0f) / 256.0f;
             v0 = (row * 64.0f) / fAtlasH;
             v1 = ((row + 1) * 64.0f) / fAtlasH;
+            u0 += insetU; u1 -= insetU; v0 += insetV; v1 -= insetV;
 
             if (tex & SURFACE_FLAG_FLIP_HORIZ) {
                 float tmp = u0; u0 = u1; u1 = tmp;
@@ -1270,6 +1277,7 @@ void menu_render_gpu_load_car_mesh(MenuRendererGPU *r, int carIdx, const tColor 
                 bu1 = ((bcol + 1) * 64.0f) / 256.0f;
                 bv0 = (brow * 64.0f) / fAtlasH;
                 bv1 = ((brow + 1) * 64.0f) / fAtlasH;
+                bu0 += insetU; bu1 -= insetU; bv0 += insetV; bv1 -= insetV;
                 if (backTex & SURFACE_FLAG_FLIP_HORIZ) { float t = bu0; bu0 = bu1; bu1 = t; }
                 if (backTex & SURFACE_FLAG_FLIP_VERT)  { float t = bv0; bv0 = bv1; bv1 = t; }
                 bcr = bcg = bcb = 1.0f;
@@ -1337,6 +1345,7 @@ void menu_render_gpu_load_car_mesh(MenuRendererGPU *r, int carIdx, const tColor 
             u1 = ((col + 1) * 64.0f) / 256.0f;
             v0 = (row * 64.0f) / fAtlasH;
             v1 = ((row + 1) * 64.0f) / fAtlasH;
+            u0 += insetU; u1 -= insetU; v0 += insetV; v1 -= insetV;
             if (tex & SURFACE_FLAG_FLIP_HORIZ) { float t = u0; u0 = u1; u1 = t; }
             if (tex & SURFACE_FLAG_FLIP_VERT)  { float t = v0; v0 = v1; v1 = t; }
             cr = cg = cb = 1.0f;
