@@ -12,6 +12,7 @@ struct VertexInput
     float3 position : TEXCOORD0;
     float2 uv       : TEXCOORD1;
     float4 color    : TEXCOORD2;
+    float3 normal   : TEXCOORD3;   /* smoothed corner normal (car shine) */
 };
 
 struct VertexOutput
@@ -24,6 +25,7 @@ struct VertexOutput
     float3 toCam    : TEXCOORD4;
     float3 up       : TEXCOORD5;
     float3 xAxis    : TEXCOORD6;
+    float3 smoothN  : TEXCOORD7;
 };
 
 VertexOutput main(VertexInput input)
@@ -37,5 +39,6 @@ VertexOutput main(VertexInput input)
     output.toCam    = camPosObj.xyz - input.position;
     output.up       = upObj.xyz;
     output.xAxis    = xAxisObj.xyz;
+    output.smoothN  = input.normal;
     return output;
 }

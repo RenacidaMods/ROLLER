@@ -13,7 +13,7 @@ cbuffer ScenePixelUniforms : register(b0, space3)
     float  carShine;   /* 0 = off (and always 0 for car shadows) */
     float  carGlint;   /* sun glint strength, 1 = default */
     float  carDark;    /* how dark the reflected ground and skyline are, 1 = default */
-    float  _pad0;
+    float  carSmooth;  /* flat panels (0) to smoothed corner normals (1, default) */
     float  _pad1;
     float  _pad2;
 };
@@ -28,6 +28,7 @@ struct PixelInput
     float3 toCam    : TEXCOORD4;
     float3 up       : TEXCOORD5;
     float3 xAxis    : TEXCOORD6;
+    float3 smoothN  : TEXCOORD7;
 };
 
 /* The surroundings the paint reflects, by direction (unit, world-aligned
@@ -71,8 +72,18 @@ float4 main(PixelInput input) : SV_Target
     {
         float3 V   = normalize(input.toCam);
         float3 N   = faceN / nLen;
-        float  ndv = dot(N, V);
-        if (ndv < 0.0) { N = -N; ndv = -ndv; }
+        if (dot(N, V) < 0.0) N = -N;
+        /* Smoothing: blend towards the corner normals averaged over
+         * neighbouring panels (game_render_hw_car_corner_normals), so
+         * reflections flow round edges instead of jumping at them. */
+        float  sLen = length(input.smoothN);
+        if (carSmooth > 0.0 && sLen > 1e-6)
+        {
+            float3 S = input.smoothN / sLen;
+            if (dot(S, N) < 0.0) S = -S;
+            N = normalize(lerp(N, S, carSmooth));
+        }
+        float  ndv = saturate(dot(N, V));
         float3 R   = reflect(-V, N);
 
         float3 up  = normalize(input.up);
