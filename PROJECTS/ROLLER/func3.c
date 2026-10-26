@@ -20,6 +20,7 @@
 #include "rollercomms.h"
 #include "net_types.h"
 #include "scene_render.h"
+#include "menu_render.h"     /* GPU winner screen */
 #include "snapshot.h"
 #include <memory.h>
 #include <string.h>
@@ -269,6 +270,11 @@ static char byWinnerScreenAnimFrame = 0;
 static int iWinnerScreenDisplayDuration = 0;
 static eFunc3ScreenPhase eWinnerScreenPhase = eFUNC3_SCREEN_PHASE_INACTIVE;
 static SceneRenderer *pWinnerScreenScene = NULL;
+/* ROLLER: with the menu renderer on the GPU, the winner screen draws through
+ * it (background, GPU car preview with HD textures, text, fades) instead of
+ * the software scene into scrbuf, which showed a blocky 640x400 car. The
+ * software path is unchanged (and is what headless snapshots use). */
+static int bWinnerScreenGpu = 0;
 
 //00056070
 void WinnerScreenEnter(int carDesign, char byFlags)
@@ -355,6 +361,17 @@ void WinnerScreenEnter(int carDesign, char byFlags)
   else
     scr_size = 64;
 
+  {
+    MenuRenderer *mr = GetMenuRenderer();
+    bWinnerScreenGpu = mr && !g_bSnapshotMode
+                    && menu_render_get_pending_mode(mr) == MENU_RENDER_GPU;
+    if (bWinnerScreenGpu) {
+      memcpy(pal_addr, palette, 256 * sizeof(tColor));
+      menu_render_load_blocks(mr, 0, front_vga[0], palette);
+      menu_render_load_blocks(mr, 1, front_vga[1], palette);
+      menu_render_free_car_mesh(mr);   // rebuilt from this screen's car texture
+    }
+  }
   // Start winner screen sequence
   ticks = 0;
   frames = 0;
@@ -376,6 +393,31 @@ int WinnerScreenUpdate(void)
   if (!iWinnerScreenActive)
     return -1;
 
+  if (bWinnerScreenGpu) {
+    MenuRenderer *mr = GetMenuRenderer();
+    menu_render_begin_frame(mr);
+    if (!front_fade) {
+      front_fade = -1;
+      menu_render_begin_fade(mr, 1, 32);
+      eWinnerScreenPhase = eFUNC3_SCREEN_PHASE_FADE_IN;
+    }
+    menu_render_background(mr, 0);
+    menu_render_load_car_mesh(mr, iWinnerScreenCarDesign, palette);
+    menu_render_draw_car_preview(mr, 512.0f, 2200.0f, Car[0].nYaw, 0, 115, 640, 285);
+    menu_render_set_layer(mr, MENU_LAYER_FOREGROUND);
+    menu_render_text(mr, 1, driver_names[result_order[0]], font3_ascii, font3_offsets, 320, 120, 0x8Fu, 1u, pal_addr);
+    menu_render_end_frame(mr);
+    if (eWinnerScreenPhase == eFUNC3_SCREEN_PHASE_FADE_IN) {
+      if (menu_render_fade_active(mr))
+        return 0;
+      frames = 0;
+      Func3BeginInputWait();
+      eWinnerScreenPhase = eFUNC3_SCREEN_PHASE_WAIT;
+      return 0;
+    }
+    if (eWinnerScreenPhase == eFUNC3_SCREEN_PHASE_FADE_OUT)
+      return menu_render_fade_active(mr) ? 0 : -1;
+  } else {
   pScrBuf = scrbuf;
   pWinnerImage = front_vga[0];
   if ( SVGA_ON )
@@ -416,6 +458,7 @@ int WinnerScreenUpdate(void)
       return 0;
     return -1;
   }
+  }
 
   iKeyPressed = 0;
   while ( Func3ScreenKeyPressed() )
@@ -426,7 +469,10 @@ int WinnerScreenUpdate(void)
   }
   if (iKeyPressed) {
     iWinnerScreenRetVal = 0;
-    fade_palette_begin(0);
+    if (bWinnerScreenGpu)
+      menu_render_begin_fade(GetMenuRenderer(), 0, 32);
+    else
+      fade_palette_begin(0);
     eWinnerScreenPhase = eFUNC3_SCREEN_PHASE_FADE_OUT;
     return 0;
   }
@@ -477,6 +523,9 @@ void WinnerScreenExit(void)
   remove_mapsels();
   scene_render_destroy(pWinnerScreenScene);
   pWinnerScreenScene = NULL;
+  if (bWinnerScreenGpu)
+    menu_render_free_car_mesh(GetMenuRenderer());
+  bWinnerScreenGpu = 0;
   gfx_size = iWinnerScreenOldGfxSize;
   if ( !iWinnerScreenRetVal )
     front_fade = 0;
