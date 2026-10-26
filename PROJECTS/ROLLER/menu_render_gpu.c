@@ -1097,7 +1097,7 @@ static void FreeMeshPreview(SDL_GPUDevice *dev, MeshPreview *mp, SDL_GPUTexture 
     if (mp->indexBuffer)  { SDL_ReleaseGPUBuffer(dev, mp->indexBuffer);  mp->indexBuffer  = NULL; }
     // Don't release whiteTexture — it's shared
     if (mp->texture && mp->texture != whiteTexture)
-        SDL_ReleaseGPUTexture(dev, mp->texture);
+        game_render_hw_release_car_atlas(dev, mp->texture);   /* may be a shared car sheet */
     mp->texture = NULL;
     mp->indexCount = 0;
     mp->loaded = false;
@@ -1436,7 +1436,7 @@ void menu_render_gpu_load_car_mesh(MenuRendererGPU *r, int carIdx, const tColor 
         r->loadedCarIdx = carIdx;
         r->loadedAdvancedCars = wantAdvanced;
     } else if (atlas) {
-        SDL_ReleaseGPUTexture(r->device, atlas);
+        game_render_hw_release_car_atlas(r->device, atlas);
     }
 
     free(vertices);

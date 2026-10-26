@@ -179,7 +179,21 @@ static bool ensure_tag_label_texture(SDL_GPUDevice *device, const char *label,
  * as they are, other tiles scaled up nearest-neighbour, and the white strip
  * k rows tall, so every UV fraction (and *outAtlasH) is unchanged. The HD
  * sheet gets mipmaps, since a 256-pixel tile on a car is usually drawn
- * smaller than that and would shimmer without them. */
+ * smaller than that and would shimmer without them.
+ *
+ * A sheet made only of HD tiles doesn't depend on the palette, so it is
+ * shared: a race has 16 cars but at most 8 designs, and each HD sheet costs
+ * dozens of PNG decodes. Release with game_render_hw_release_car_atlas. */
+#define GRHW_CAR_ATLAS_SHARE_SLOTS 32
+
+typedef struct {
+    SDL_GPUDevice  *dev;
+    SDL_GPUTexture *tex;
+    int             refs, numTiles, atlasH;
+} GRHWCarAtlasShare;
+
+static GRHWCarAtlasShare s_carAtlasShare[GRHW_CAR_ATLAS_SHARE_SLOTS];   /* by texture bank */
+
 SDL_GPUTexture *game_render_hw_build_car_atlas(SDL_GPUDevice *dev, int carIdx,
                                                const tColor *pal,
                                                int *outNumTiles, int *outAtlasH)
@@ -193,15 +207,18 @@ SDL_GPUTexture *game_render_hw_build_car_atlas(SDL_GPUDevice *dev, int carIdx,
 
     int numRows = (nTiles + 3) / 4;
 
-    /* HD tiles: all must share one size (the first found sets it). */
-    uint8 **hdTiles = calloc((size_t)nTiles, sizeof(*hdTiles));
-    int hdSize = 0, hdCount = 0;
-    if (hdTiles) {
-        for (int t = 0; t < nTiles; t++) {
-            hdTiles[t] = scene_render_gpu_load_hd_bank_tile(texSlot, t, 64, &hdSize);
-            if (hdTiles[t]) hdCount++;
-        }
+    GRHWCarAtlasShare *share = texSlot < GRHW_CAR_ATLAS_SHARE_SLOTS ? &s_carAtlasShare[texSlot] : NULL;
+    if (share && share->refs > 0 && share->dev == dev && g_bHDTextures) {
+        share->refs++;
+        if (outNumTiles) *outNumTiles = share->numTiles;
+        if (outAtlasH)   *outAtlasH  = share->atlasH;
+        return share->tex;
     }
+
+    int hdSize = 0, hdCount = 0;
+    uint8 **hdTiles = scene_render_gpu_load_hd_bank_tiles(texSlot, nTiles, 64, &hdSize);
+    for (int t = 0; hdTiles && t < nTiles; t++)
+        if (hdTiles[t]) hdCount++;
     int k = hdCount > 0 ? hdSize / 64 : 1;
     int tilePx  = 64 * k;
     int atlasW  = 256 * k;
@@ -241,17 +258,32 @@ SDL_GPUTexture *game_render_hw_build_car_atlas(SDL_GPUDevice *dev, int carIdx,
         }
     }
 
-    if (hdCount > 0)
-        SDL_Log("HD-TEX: car texture bank %d: %d of %d tiles replaced at %dx%d",
-                texSlot, hdCount, nTiles, hdSize, hdSize);
     for (int t = 0; hdTiles && t < nTiles; t++) free(hdTiles[t]);
     free(hdTiles);
 
     SDL_GPUTexture *tex = scene_render_gpu_upload_rgba(dev, rgba, atlasW, atlasH, k > 1);
     free(rgba);
+    if (tex && share && share->refs == 0 && hdCount == nTiles)
+        *share = (GRHWCarAtlasShare){dev, tex, 1, nTiles, numRows * 64 + 1};
     if (outNumTiles) *outNumTiles = nTiles;
     if (outAtlasH)   *outAtlasH  = numRows * 64 + 1;
     return tex;
+}
+
+void game_render_hw_release_car_atlas(SDL_GPUDevice *dev, SDL_GPUTexture *tex)
+{
+    if (!tex) return;
+    for (int i = 0; i < GRHW_CAR_ATLAS_SHARE_SLOTS; i++) {
+        GRHWCarAtlasShare *share = &s_carAtlasShare[i];
+        if (share->refs > 0 && share->tex == tex) {
+            if (--share->refs == 0) {
+                SDL_ReleaseGPUTexture(share->dev, tex);
+                *share = (GRHWCarAtlasShare){0};
+            }
+            return;
+        }
+    }
+    SDL_ReleaseGPUTexture(dev, tex);
 }
 
 /* Resolve animated polygon texture for a given animation frame.
@@ -304,7 +336,7 @@ static bool build_car_mesh(SDL_GPUDevice *dev, int carIdx,
     uint32         *indices  = calloc((size_t)(numPols * 12 + 12), sizeof(uint32));
     if (!vertices || !indices) {
         free(vertices); free(indices);
-        if (out->atlas) { SDL_ReleaseGPUTexture(dev, out->atlas); out->atlas = NULL; }
+        if (out->atlas) { game_render_hw_release_car_atlas(dev, out->atlas); out->atlas = NULL; }
         return false;
     }
 
@@ -508,7 +540,7 @@ static bool build_car_mesh(SDL_GPUDevice *dev, int carIdx,
             if (out->vertexBufs[f]) { SDL_ReleaseGPUBuffer(dev, out->vertexBufs[f]); out->vertexBufs[f] = NULL; }
         }
         if (out->indexBuf)  { SDL_ReleaseGPUBuffer(dev, out->indexBuf);  out->indexBuf  = NULL; }
-        if (out->atlas)     { SDL_ReleaseGPUTexture(dev, out->atlas);    out->atlas      = NULL; }
+        if (out->atlas)     { game_render_hw_release_car_atlas(dev, out->atlas); out->atlas = NULL; }
         return false;
     }
     return true;
@@ -582,7 +614,7 @@ void game_render_hw_destroy(GameRendererHardware *r)
         for (int f = 0; f < GRHW_ANIM_FRAMES; f++)
             if (m->vertexBufs[f]) SDL_ReleaseGPUBuffer(r->device, m->vertexBufs[f]);
         if (m->indexBuf)  SDL_ReleaseGPUBuffer(r->device, m->indexBuf);
-        if (m->atlas)     SDL_ReleaseGPUTexture(r->device, m->atlas);
+        if (m->atlas)     game_render_hw_release_car_atlas(r->device, m->atlas);
     }
     for (int i = 0; i < GAME_RENDER_HW_NUM_CARS; i++) {
         if (s_tagLabelCache[i].tex) SDL_ReleaseGPUTexture(r->device, s_tagLabelCache[i].tex);
@@ -613,7 +645,7 @@ void game_render_hw_draw_car(GameRendererHardware       *r,
             if (mesh->vertexBufs[f]) { SDL_ReleaseGPUBuffer(r->device, mesh->vertexBufs[f]); mesh->vertexBufs[f] = NULL; }
         }
         if (mesh->indexBuf)  { SDL_ReleaseGPUBuffer(r->device, mesh->indexBuf);  mesh->indexBuf  = NULL; }
-        if (mesh->atlas)     { SDL_ReleaseGPUTexture(r->device, mesh->atlas);    mesh->atlas      = NULL; }
+        if (mesh->atlas)     { game_render_hw_release_car_atlas(r->device, mesh->atlas); mesh->atlas = NULL; }
         mesh->built = false;
     }
     if (!mesh->built) {

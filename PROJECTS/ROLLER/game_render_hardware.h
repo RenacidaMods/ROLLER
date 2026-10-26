@@ -48,4 +48,8 @@ SDL_GPUTexture *game_render_hw_build_car_atlas(SDL_GPUDevice *dev, int carIdx,
                                                const tColor *pal,
                                                int *outNumTiles, int *outAtlasH);
 
+/* Release a texture from game_render_hw_build_car_atlas (HD sheets are shared
+ * between cars of the same design). Any other texture is simply released. */
+void game_render_hw_release_car_atlas(SDL_GPUDevice *dev, SDL_GPUTexture *tex);
+
 #endif /* GAME_RENDER_HARDWARE_H */

@@ -148,11 +148,12 @@ void scene_render_gpu_set_ambient_occlusion_view(SceneRendererGPU *r, bool showO
  * corner, edge or the centre. 1.0 = the original full-screen HUD. */
 void scene_render_gpu_set_hud_scale(SceneRendererGPU *r, float scale);
 /* With HD Textures on: the RGBA pixels (alpha snapped to 0/255) of
- * ../hd_textures/<bank source file>/<tile>.png for texture bank tex_idx, or
- * NULL if absent or unusable. It must be square, a power of two from
- * tileSize up to 1024, and equal to *ioHdSize when that's non-zero (set on
- * success). Caller frees with free(). */
-uint8 *scene_render_gpu_load_hd_bank_tile(int tex_idx, int tile, int tileSize, int *ioHdSize);
+ * ../hd_textures/<bank source file>/000.png onwards for texture bank tex_idx,
+ * decoded on several threads. Returns a numTiles-long array whose NULL
+ * entries have no usable HD file, or NULL when none loaded. Tiles must be
+ * square, a power of two from tileSize up to 1024, and all one size
+ * (*outHdSize). Caller frees each entry and the array with free(). */
+uint8 **scene_render_gpu_load_hd_bank_tiles(int tex_idx, int numTiles, int tileSize, int *outHdSize);
 /* Separate scale (0.25..1.0) for HUD pieces pinned to the bottom-left
  * corner, where the game's HUD keeps the track map. */
 void scene_render_gpu_set_hud_map_scale(SceneRendererGPU *r, float scale);

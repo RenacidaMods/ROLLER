@@ -4612,12 +4612,18 @@ static bool flush_texture_uploads_if_large(SDL_GPUDevice *dev,
  * changes. HD tiles must be square, a power of two from the tile size up to
  * SCENE_GPU_HD_MAX_TILE_SIZE, and all the same size within a bank (the first
  * one found sets it). Alpha is snapped to 0/255 at 50%, matching palette
- * index 0's on/off transparency. Car meshes use their own atlas
- * (game_render_hardware.c / menu_render_gpu.c) and aren't covered yet.
+ * index 0's on/off transparency. A race reads a few thousand of these
+ * files, so each bank's tiles are decoded on several threads at once
+ * (load_hd_tile_files). Car meshes build their own sheet from
+ * scene_render_gpu_load_hd_bank_tiles (game_render_hardware.c).
  * -------------------------------------------------------------------------- */
 #define SCENE_GPU_HD_MAX_TILE_SIZE 1024
+#define SCENE_GPU_HD_MAX_THREADS   8
 
-static uint8 *load_hd_tile_rgba(const char *path, int tileSize, int *ioHdSize)
+/* Decodes one tile file to tightly packed RGBA and sets *outSize to its
+ * width. NULL (with a log line) if unreadable, not square, or not a power of
+ * two from tileSize to SCENE_GPU_HD_MAX_TILE_SIZE. */
+static uint8 *load_hd_tile_rgba(const char *path, int tileSize, int *outSize)
 {
     SDL_Surface *loaded = IMG_Load(path);
     if (!loaded) {
@@ -4633,11 +4639,9 @@ static uint8 *load_hd_tile_rgba(const char *path, int tileSize, int *ioHdSize)
 
     int size = rgba->w;
     bool pow2 = size > 0 && (size & (size - 1)) == 0;
-    if (rgba->w != rgba->h || size < tileSize || !pow2 || size > SCENE_GPU_HD_MAX_TILE_SIZE
-            || (*ioHdSize && size != *ioHdSize)) {
-        SDL_Log("HD-TEX: skipped %s (%dx%d): must be square, a power of two from %d to %d, "
-                "and the same size as the bank's other HD tiles (%d)",
-                path, rgba->w, rgba->h, tileSize, SCENE_GPU_HD_MAX_TILE_SIZE, *ioHdSize);
+    if (rgba->w != rgba->h || size < tileSize || !pow2 || size > SCENE_GPU_HD_MAX_TILE_SIZE) {
+        SDL_Log("HD-TEX: skipped %s (%dx%d): must be square and a power of two from %d to %d",
+                path, rgba->w, rgba->h, tileSize, SCENE_GPU_HD_MAX_TILE_SIZE);
         SDL_DestroySurface(rgba);
         return NULL;
     }
@@ -4654,10 +4658,97 @@ static uint8 *load_hd_tile_rgba(const char *path, int tileSize, int *ioHdSize)
                 dst[x * 4 + 3] = src[x * 4 + 3] >= 128 ? 255 : 0;
             }
         }
-        *ioHdSize = size;
+        *outSize = size;
     }
     SDL_DestroySurface(rgba);
     return out;
+}
+
+/* One worker's share of a bank: tiles first, first + step, ... */
+typedef struct {
+    const char *dir;
+    int         numTiles, tileSize, first, step;
+    uint8     **tiles;
+    int        *sizes;   /* per tile: HD size, 0 = no file, -1 = file unusable */
+} HDTileLoadJob;
+
+static int SDLCALL hd_tile_load_worker(void *data)
+{
+    HDTileLoadJob *job = data;
+    for (int t = job->first; t < job->numTiles; t += job->step) {
+        char path[600];
+        SDL_snprintf(path, sizeof(path), "%s/%03d.png", job->dir, t);
+        SDL_PathInfo info;
+        if (!SDL_GetPathInfo(path, &info) || info.type != SDL_PATHTYPE_FILE)
+            continue;
+        job->tiles[t] = load_hd_tile_rgba(path, job->tileSize, &job->sizes[t]);
+        if (!job->tiles[t]) job->sizes[t] = -1;
+    }
+    return 0;
+}
+
+/* Loads <dir>/000.png onwards on up to SCENE_GPU_HD_MAX_THREADS threads.
+ * Returns a numTiles-long array (NULL entries keep the original tile), or
+ * NULL when no tile loaded. Every tile must match the lowest-numbered one's
+ * size; others are dropped. Logs one HD-TEX line for the bank, with label. */
+static uint8 **load_hd_tile_files(const char *dir, const char *label, int numTiles,
+                                  int tileSize, int *outHdSize)
+{
+    *outHdSize = 0;
+    SDL_PathInfo info;
+    if (numTiles <= 0 || !SDL_GetPathInfo(dir, &info) || info.type != SDL_PATHTYPE_DIRECTORY)
+        return NULL;
+
+    uint8 **tiles = calloc((size_t)numTiles, sizeof(*tiles));
+    int    *sizes = calloc((size_t)numTiles, sizeof(*sizes));
+    if (!tiles || !sizes) { free(tiles); free(sizes); return NULL; }
+
+    Uint64 t0 = SDL_GetTicksNS();
+    int numThreads = SDL_GetNumLogicalCPUCores();
+    if (numThreads > SCENE_GPU_HD_MAX_THREADS) numThreads = SCENE_GPU_HD_MAX_THREADS;
+    if (numThreads > numTiles) numThreads = numTiles;
+    if (numThreads < 1) numThreads = 1;
+
+    HDTileLoadJob jobs[SCENE_GPU_HD_MAX_THREADS];
+    SDL_Thread   *threads[SCENE_GPU_HD_MAX_THREADS] = {0};
+    for (int i = 0; i < numThreads; i++) {
+        jobs[i] = (HDTileLoadJob){dir, numTiles, tileSize, i, numThreads, tiles, sizes};
+        if (i > 0) threads[i] = SDL_CreateThread(hd_tile_load_worker, "hd-tiles", &jobs[i]);
+    }
+    hd_tile_load_worker(&jobs[0]);
+    for (int i = 1; i < numThreads; i++) {
+        if (threads[i]) SDL_WaitThread(threads[i], NULL);
+        else            hd_tile_load_worker(&jobs[i]);   /* thread creation failed */
+    }
+
+    int hdSize = 0, found = 0, skipped = 0;
+    for (int t = 0; t < numTiles; t++) {
+        if (!tiles[t]) {
+            if (sizes[t] < 0) skipped++;
+            continue;
+        }
+        if (!hdSize) hdSize = sizes[t];
+        if (sizes[t] != hdSize) {
+            SDL_Log("HD-TEX: skipped %s/%03d.png (%dx%d): the bank's other HD tiles are %dx%d",
+                    dir, t, sizes[t], sizes[t], hdSize, hdSize);
+            free(tiles[t]);
+            tiles[t] = NULL;
+            skipped++;
+            continue;
+        }
+        found++;
+    }
+    free(sizes);
+
+    SDL_Log("HD-TEX: %s (%s): %d of %d tiles replaced at %dx%d, %d skipped, %.0f ms",
+            dir, label, found, numTiles, hdSize, hdSize, skipped,
+            (double)(SDL_GetTicksNS() - t0) / 1e6);
+    if (!found) {
+        free(tiles);
+        return NULL;
+    }
+    *outHdSize = hdSize;
+    return tiles;
 }
 
 /* Returns a numTiles-long array of HD tile pixels (NULL entries keep the
@@ -4667,46 +4758,22 @@ static uint8 **load_hd_tiles(const SceneGPUTextureSlot *slot, int *outHdSize)
     *outHdSize = 0;
     if (slot->tileSize != 64) return NULL;
 
-    char dir[512];
+    char dir[512], label[32];
     SDL_snprintf(dir, sizeof(dir), "../hd_textures/%s", slot->dumpName);
-    SDL_PathInfo info;
-    if (!SDL_GetPathInfo(dir, &info) || info.type != SDL_PATHTYPE_DIRECTORY)
-        return NULL;
-
-    uint8 **tiles = calloc((size_t)slot->numTiles, sizeof(*tiles));
-    if (!tiles) return NULL;
-
-    int found = 0, skipped = 0;
-    for (int t = 0; t < slot->numTiles; t++) {
-        char path[600];
-        SDL_snprintf(path, sizeof(path), "%s/%03d.png", dir, t);
-        if (!SDL_GetPathInfo(path, &info) || info.type != SDL_PATHTYPE_FILE)
-            continue;
-        tiles[t] = load_hd_tile_rgba(path, slot->tileSize, outHdSize);
-        if (tiles[t]) found++;
-        else          skipped++;
-    }
-
-    SDL_Log("HD-TEX: %s (bank %d): %d of %d tiles replaced at %dx%d, %d skipped",
-            dir, slot->tex_idx, found, slot->numTiles, *outHdSize, *outHdSize, skipped);
-    if (!found) {
-        free(tiles);
-        return NULL;
-    }
-    return tiles;
+    SDL_snprintf(label, sizeof(label), "bank %d", slot->tex_idx);
+    return load_hd_tile_files(dir, label, slot->numTiles, slot->tileSize, outHdSize);
 }
 
-uint8 *scene_render_gpu_load_hd_bank_tile(int tex_idx, int tile, int tileSize, int *ioHdSize)
+uint8 **scene_render_gpu_load_hd_bank_tiles(int tex_idx, int numTiles, int tileSize, int *outHdSize)
 {
-    if (!g_bHDTextures || !ioHdSize) return NULL;
-    char folder[64];
+    if (!outHdSize) return NULL;
+    *outHdSize = 0;
+    if (!g_bHDTextures) return NULL;
+    char folder[64], dir[512], label[32];
     texture_bank_folder_name(tex_idx, folder, sizeof(folder));
-    char path[600];
-    SDL_snprintf(path, sizeof(path), "../hd_textures/%s/%03d.png", folder, tile);
-    SDL_PathInfo info;
-    if (!SDL_GetPathInfo(path, &info) || info.type != SDL_PATHTYPE_FILE)
-        return NULL;
-    return load_hd_tile_rgba(path, tileSize, ioHdSize);
+    SDL_snprintf(dir, sizeof(dir), "../hd_textures/%s", folder);
+    SDL_snprintf(label, sizeof(label), "car bank %d", tex_idx);
+    return load_hd_tile_files(dir, label, numTiles, tileSize, outHdSize);
 }
 
 static void free_hd_tiles(uint8 **tiles, int numTiles)
