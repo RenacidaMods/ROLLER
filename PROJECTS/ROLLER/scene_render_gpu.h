@@ -158,18 +158,22 @@ uint8 **scene_render_gpu_load_hd_bank_tiles(int tex_idx, int numTiles, int tileS
  * corner, where the game's HUD keeps the track map. */
 void scene_render_gpu_set_hud_map_scale(SceneRendererGPU *r, float scale);
 /* Car shine: race cars reflect a sky/skyline/ground environment. strength
- * 0 = off, up to 2; glint = sun glint, 0 to 2 (1 default); dark = how dark
+ * 0 = off, up to 2; glint = sun glint, 0 to 4 (2 default); dark = how dark
  * the reflected ground and skyline are, 0 to 1 (1 default). */
 void scene_render_gpu_set_car_shine(SceneRendererGPU *r, float strength, float glint, float dark);
 /* Set each frame: while an in-race menu is drawn on the HUD, HUD scale is
  * suspended so the menu isn't split into separately scaled pieces. */
 void scene_render_gpu_set_hud_menu_open(SceneRendererGPU *r, bool open);
-/* Bracket the drawing of a zoom message ("FINAL LAP", "PIT WORK"...) into
- * the HUD buffer buf (w x h). While HUD scale is on, the pixels it changed
- * are moved to a separate layer drawn unscaled on top, and buf is restored,
- * so the message doesn't take part in HUD piece scaling. No-op otherwise. */
+/* Bracket the drawing of a zoom message ("FINAL LAP", "PIT WORK"...) or of
+ * the track map into the HUD buffer buf (w x h), ending either with
+ * scene_render_gpu_hud_layer_end. While HUD scale is on, the pixels drawn
+ * are moved to their own layer and buf is restored, so they take no part in
+ * HUD piece scaling: messages are drawn unscaled on top, the map as one
+ * piece scaled by the map scale towards the bottom-left corner. No-op
+ * otherwise. */
 void scene_render_gpu_hud_message_begin(SceneRendererGPU *r, uint8 *buf, int w, int h);
-void scene_render_gpu_hud_message_end(SceneRendererGPU *r);
+void scene_render_gpu_hud_map_begin(SceneRendererGPU *r, uint8 *buf, int w, int h);
+void scene_render_gpu_hud_layer_end(SceneRendererGPU *r);
 
 /* brightness: additive offset; 0.0 = neutral, positive = brighter, negative = darker */
 void scene_render_gpu_set_brightness(SceneRendererGPU *r, float brightness);

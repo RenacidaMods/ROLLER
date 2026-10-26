@@ -18,6 +18,7 @@
 #include "moving.h"
 #include "graphics.h"
 #include "snapshot.h"
+#include "game_render_hw.h"   /* game_render_hud_map_begin */
 #include <stdio.h>
 #include "roller.h"
 #include <string.h>
@@ -1380,7 +1381,9 @@ void test_panel(uint8 *pScrBuf, int iPlayerCarIdx)
       prt_string(rev_vga[1], buffer, 2, winh - 12);
     }
   }
+  game_render_hud_map_begin(g_pGameRenderer);   // ROLLER: map scales as one piece with HUD scale
   showmap(byScreenPtr, iCarIndex_1);            // Finally render the minimap overlay
+  game_render_hud_layer_end(g_pGameRenderer);
 }
 
 //-------------------------------------------------------------------------------------------------

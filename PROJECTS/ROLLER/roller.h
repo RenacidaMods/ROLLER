@@ -46,7 +46,7 @@ extern float g_fAORadius;        /* AO radius in world units (a car is ~1300 lon
 extern float g_fAOStrength;      /* AO strength; 1.0 = as computed */
 extern float g_fHUDScale;        /* GPU HUD scale 0.25..1.0; 1.0 = original full-screen HUD */
 extern float g_fCarShine;         /* GPU car shine (environment reflection) strength; 0.0 = off, up to 2.0 */
-extern float g_fCarShineGlint;    /* car shine sun glint, 0.0-2.0; 1.0 = default */
+extern float g_fCarShineGlint;    /* car shine sun glint, 0.0-4.0; 2.0 = default */
 extern float g_fCarShineDark;     /* car shine reflected ground/skyline darkness, 0.0-1.0; 1.0 = default */
 extern float g_fHUDMapScale;     /* GPU HUD scale for the bottom-left track map; 1.0 = original */
 extern float g_fBrightness;      /* additive brightness; 0.0 = neutral */

@@ -3410,7 +3410,7 @@ static int InputParseDebugSetting(const char *szName, const char *szValue)
 
   if (InputStringEqualsNoCase(szName, "CarShineGlint")) {
     g_fCarShineGlint = (float)atof(szValue);
-    if (g_fCarShineGlint < 0.0f || g_fCarShineGlint > 2.0f) g_fCarShineGlint = 1.0f;
+    if (g_fCarShineGlint < 0.0f || g_fCarShineGlint > 4.0f) g_fCarShineGlint = 2.0f;
     return 1;
   }
 

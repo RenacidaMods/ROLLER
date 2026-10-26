@@ -43,12 +43,14 @@ void game_render_set_ambient_occlusion(GameRenderer *renderer, bool enabled,
                                        float radius, float strength);
 void game_render_set_ambient_occlusion_view(GameRenderer *renderer, bool showOnly);
 void game_render_set_hud_scale(GameRenderer *renderer, float scale);
-/* Around ZoomString: keeps zoom messages out of HUD scaling (see
- * scene_render_gpu_hud_message_begin). */
+/* Around the zoom messages and the track map: keeps them out of HUD piece
+ * scaling (see scene_render_gpu_hud_message_begin). Each begin is closed
+ * by game_render_hud_layer_end. */
 void game_render_hud_message_begin(GameRenderer *renderer);
-void game_render_hud_message_end(GameRenderer *renderer);
+void game_render_hud_map_begin(GameRenderer *renderer);
+void game_render_hud_layer_end(GameRenderer *renderer);
 void game_render_set_hud_map_scale(GameRenderer *renderer, float scale);
-/* Car shine (GPU race cars only): strength 0 = off, up to 2; sun glint 0-2;
+/* Car shine (GPU race cars only): strength 0 = off, up to 2; sun glint 0-4;
  * reflected ground/skyline darkness 0-1. */
 void game_render_set_car_shine(GameRenderer *renderer, float strength, float glint, float dark);
 /* FOV multiplier on top of game camera: 1.0=native, <1=zoom in, >1=zoom out */

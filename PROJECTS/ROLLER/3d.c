@@ -5248,7 +5248,7 @@ void game_copypic(uint8 *pSrc, uint8 *pDest, int iCarIdx)
             ZoomSub(zoom_sub[1], font6_ascii, rev_vga[1], 1, font6_offsets);
         }
       }
-      game_render_hud_message_end(g_pGameRenderer);
+      game_render_hud_layer_end(g_pGameRenderer);
       goto HANDLE_SPECIAL_MODES;
     }
     shown_panel = -1;                           // Hide panel and handle race countdown logic

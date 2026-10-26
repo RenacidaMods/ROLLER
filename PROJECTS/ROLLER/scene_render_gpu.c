@@ -43,6 +43,10 @@ extern int backwards;          /* drawtrk3.c: -1 = camera looks backward along t
                                           * CINEMA cheat letterbox also reuses slot 0 (mutually
                                           * exclusive with mirror/2P per frame, see 3d.c control flow) */
 #define SCENE_GPU_MAX_SECONDARY_TARGET_DIMENSION 8192
+/* HUD layers (see hudLayer in SceneRendererGPU). */
+#define SCENE_GPU_HUD_LAYER_MESSAGE 0
+#define SCENE_GPU_HUD_LAYER_MAP     1
+#define SCENE_GPU_HUD_LAYERS        2
 /* SCENE_GPU_NEAR / SCENE_GPU_FAR defined in scene_render_gpu.h */
 
 /* Mirrors polyf.c's SHADE_PALETTE_LEVELS (5) -- shadow_poly()'s per-pixel
@@ -307,20 +311,29 @@ struct SceneRendererGPU {
     SDL_GPUTransferBuffer   *hudPieceXfer;
     int                      hudPieceVertCount;
     SDL_GPUTexture          *hudClearTex;   /* 1x1 transparent: vignette-only pass */
-    /* Zoom messages ("FINAL LAP", "PIT WORK"...) are lifted off the HUD
-     * while HUD scale is on (scene_render_gpu_hud_message_begin/end): they
-     * zoom out past the screen edges, which merged every HUD piece into one
-     * and pulled the whole HUD to the centre. They're drawn unscaled on top
-     * instead, from their own layer. */
-    uint8                   *hudMsgSave;    /* HUD just before a message was drawn */
-    uint8                   *hudMsgLayer;   /* message pixels, index 0 = empty */
-    uint8                   *hudMsgBuf;     /* buffer being captured */
-    int                      hudMsgW, hudMsgH;
-    bool                     hudMsgCapturing;
-    bool                     hudMsgUsed;    /* hudMsgLayer has pixels this frame */
-    bool                     hudMsgDraw;    /* uploaded to hudMsgTex this frame */
-    SDL_GPUTexture          *hudMsgTex;
-    SDL_GPUTransferBuffer   *hudMsgXfer;
+    /* HUD layers lifted off the HUD while HUD scale is on
+     * (scene_render_gpu_hud_*_begin / scene_render_gpu_hud_layer_end), so
+     * piece detection never sees them:
+     * - SCENE_GPU_HUD_LAYER_MESSAGE: zoom messages ("FINAL LAP", "PIT
+     *   WORK"...). They zoom out past the screen edges, which merged every
+     *   HUD piece into one and pulled the whole HUD to the centre. Drawn
+     *   unscaled on top, where the game drew them.
+     * - SCENE_GPU_HUD_LAYER_MAP: the track map. As its car dots moved, its
+     *   outline crossed the "near the bottom" line and it flipped between
+     *   anchors and scales. Drawn as one piece scaled by hudMapScale
+     *   towards the bottom-left corner. */
+    uint8                   *hudLayerSave;  /* HUD just before a layer's pixels were drawn */
+    uint8                   *hudLayerBuf;   /* buffer being captured */
+    int                      hudLayerW, hudLayerH;
+    int                      hudLayerCapturing; /* layer being captured + 1; 0 = none */
+    uint8                   *hudLayer[SCENE_GPU_HUD_LAYERS];     /* index 0 = empty */
+    bool                     hudLayerUsed[SCENE_GPU_HUD_LAYERS]; /* has pixels this frame */
+    bool                     hudLayerDraw[SCENE_GPU_HUD_LAYERS]; /* uploaded this frame */
+    SDL_GPUTexture          *hudLayerTex[SCENE_GPU_HUD_LAYERS];
+    SDL_GPUTransferBuffer   *hudLayerXfer[SCENE_GPU_HUD_LAYERS];
+    SDL_GPUBuffer           *hudMapVertBuf;   /* full quad scaled towards the bottom-left */
+    SDL_GPUTransferBuffer   *hudMapVertXfer;
+    float                    hudMapVertScale; /* scale hudMapVertBuf holds; 0 = not built */
 
     /* Updated from game_render.c each frame before end_frame. */
     uint8 *hudSrcBuf;
@@ -447,7 +460,7 @@ struct SceneRendererGPU {
     bool  ssaoCreateFailed; /* don't retry (and re-log) every frame */
     float brightness;      /* additive brightness offset; 0.0 = neutral */
     float carShine;        /* car shine (environment reflection) strength; 0.0 = off */
-    float carGlint;        /* car shine sun glint strength; 1.0 = default */
+    float carGlint;        /* car shine sun glint strength, 0-4; 2.0 = default */
     float carDark;         /* car shine reflected ground/skyline darkness; 1.0 = default */
     float fovMultiplier;   /* FOV multiplier applied on top of the game camera; 1.0 = native */
     bool  wireframe;       /* render geometry as wireframe */
@@ -1809,7 +1822,7 @@ SceneRendererGPU *scene_render_gpu_create(SDL_GPUDevice *device, SDL_Window *win
     r->fogColor[2]     = 0.80f;
     r->fogColor[3]     = 1.0f;
     r->saturation      = 1.0f;
-    r->carGlint        = 1.0f;
+    r->carGlint        = 2.0f;
     r->carDark         = 1.0f;
     r->contrast        = 1.0f;
     r->fovMultiplier   = 1.0f;
@@ -2068,10 +2081,14 @@ void scene_render_gpu_destroy(SceneRendererGPU *r)
     if (r->hudPieceVertBuf) SDL_ReleaseGPUBuffer(r->device, r->hudPieceVertBuf);
     if (r->hudPieceXfer)    SDL_ReleaseGPUTransferBuffer(r->device, r->hudPieceXfer);
     if (r->hudClearTex)     SDL_ReleaseGPUTexture(r->device, r->hudClearTex);
-    if (r->hudMsgTex)       SDL_ReleaseGPUTexture(r->device, r->hudMsgTex);
-    if (r->hudMsgXfer)      SDL_ReleaseGPUTransferBuffer(r->device, r->hudMsgXfer);
-    free(r->hudMsgSave);
-    free(r->hudMsgLayer);
+    for (int l = 0; l < SCENE_GPU_HUD_LAYERS; l++) {
+        if (r->hudLayerTex[l])  SDL_ReleaseGPUTexture(r->device, r->hudLayerTex[l]);
+        if (r->hudLayerXfer[l]) SDL_ReleaseGPUTransferBuffer(r->device, r->hudLayerXfer[l]);
+        free(r->hudLayer[l]);
+    }
+    free(r->hudLayerSave);
+    if (r->hudMapVertBuf)  SDL_ReleaseGPUBuffer(r->device, r->hudMapVertBuf);
+    if (r->hudMapVertXfer) SDL_ReleaseGPUTransferBuffer(r->device, r->hudMapVertXfer);
     if (r->hudVertBuf)    SDL_ReleaseGPUBuffer(r->device, r->hudVertBuf);
     if (r->skyVertBuf) SDL_ReleaseGPUBuffer(r->device, r->skyVertBuf);
     if (r->skyVertXfer) SDL_ReleaseGPUTransferBuffer(r->device, r->skyVertXfer);
@@ -3349,40 +3366,77 @@ static bool scene_render_gpu_end_frame_internal(SceneRendererGPU *r,
                     }
                 }
 
-                /* Zoom message layer (see hudMsgLayer), unscaled on top. */
-                r->hudMsgDraw = false;
-                if (r->hudMsgUsed && r->hudMsgW == hw && r->hudMsgH == hh) {
-                    if (!r->hudMsgTex) {
-                        SDL_GPUTextureCreateInfo mti = {
-                            .type = SDL_GPU_TEXTURETYPE_2D,
-                            .format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM,
-                            .width = (Uint32)hw, .height = (Uint32)hh,
-                            .layer_count_or_depth = 1, .num_levels = 1,
-                            .usage = SDL_GPU_TEXTUREUSAGE_SAMPLER
-                        };
-                        r->hudMsgTex = SDL_CreateGPUTexture(r->device, &mti);
-                        SDL_GPUTransferBufferCreateInfo mtbi = {
-                            .usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD, .size = sz
-                        };
-                        r->hudMsgXfer = SDL_CreateGPUTransferBuffer(r->device, &mtbi);
+                /* HUD layers (see hudLayer): their own textures. */
+                for (int l = 0; l < SCENE_GPU_HUD_LAYERS; l++) {
+                    r->hudLayerDraw[l] = false;
+                    if (r->hudLayerUsed[l] && r->hudLayerW == hw && r->hudLayerH == hh) {
+                        if (!r->hudLayerTex[l]) {
+                            SDL_GPUTextureCreateInfo mti = {
+                                .type = SDL_GPU_TEXTURETYPE_2D,
+                                .format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM,
+                                .width = (Uint32)hw, .height = (Uint32)hh,
+                                .layer_count_or_depth = 1, .num_levels = 1,
+                                .usage = SDL_GPU_TEXTUREUSAGE_SAMPLER
+                            };
+                            r->hudLayerTex[l] = SDL_CreateGPUTexture(r->device, &mti);
+                            SDL_GPUTransferBufferCreateInfo mtbi = {
+                                .usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD, .size = sz
+                            };
+                            r->hudLayerXfer[l] = SDL_CreateGPUTransferBuffer(r->device, &mtbi);
+                        }
+                        uint8 *mm = (r->hudLayerTex[l] && r->hudLayerXfer[l])
+                                  ? SDL_MapGPUTransferBuffer(r->device, r->hudLayerXfer[l], true) : NULL;
+                        if (mm) {
+                            indexed_to_rgba(r->hudLayer[l], palette, mm, hw * hh);
+                            SDL_UnmapGPUTransferBuffer(r->device, r->hudLayerXfer[l]);
+                            SDL_GPUTextureTransferInfo msrc = {.transfer_buffer = r->hudLayerXfer[l]};
+                            SDL_GPUTextureRegion mdst = {
+                                .texture = r->hudLayerTex[l],
+                                .w = (Uint32)hw, .h = (Uint32)hh, .d = 1
+                            };
+                            SDL_UploadToGPUTexture(cp, &msrc, &mdst, true);
+                            r->hudLayerDraw[l] = true;
+                        }
                     }
-                    uint8 *mm = (r->hudMsgTex && r->hudMsgXfer)
-                              ? SDL_MapGPUTransferBuffer(r->device, r->hudMsgXfer, true) : NULL;
-                    if (mm) {
-                        indexed_to_rgba(r->hudMsgLayer, palette, mm, hw * hh);
-                        SDL_UnmapGPUTransferBuffer(r->device, r->hudMsgXfer);
-                        SDL_GPUTextureTransferInfo msrc = {.transfer_buffer = r->hudMsgXfer};
-                        SDL_GPUTextureRegion mdst = {
-                            .texture = r->hudMsgTex,
-                            .w = (Uint32)hw, .h = (Uint32)hh, .d = 1
-                        };
-                        SDL_UploadToGPUTexture(cp, &msrc, &mdst, true);
-                        r->hudMsgDraw = true;
+                    if (r->hudLayerUsed[l]) {
+                        memset(r->hudLayer[l], 0, (size_t)r->hudLayerW * r->hudLayerH);
+                        r->hudLayerUsed[l] = false;
                     }
                 }
-                if (r->hudMsgUsed) {
-                    memset(r->hudMsgLayer, 0, (size_t)r->hudMsgW * r->hudMsgH);
-                    r->hudMsgUsed = false;
+                /* The map layer's quad: the full HUD scaled by hudMapScale
+                 * towards the bottom-left corner (NDC -1,-1; UV 0,0 is the
+                 * top-left, as in hudVertBuf). Rebuilt when the scale changes. */
+                if (r->hudLayerDraw[SCENE_GPU_HUD_LAYER_MAP]) {
+                    float ms = r->hudMapScale;
+                    if (!r->hudMapVertBuf) {
+                        SDL_GPUBufferCreateInfo bi = {
+                            .usage = SDL_GPU_BUFFERUSAGE_VERTEX, .size = 6 * (Uint32)sizeof(SceneGPUHUDVertex)
+                        };
+                        r->hudMapVertBuf = SDL_CreateGPUBuffer(r->device, &bi);
+                        SDL_GPUTransferBufferCreateInfo ti2 = {
+                            .usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD, .size = 6 * (Uint32)sizeof(SceneGPUHUDVertex)
+                        };
+                        r->hudMapVertXfer = SDL_CreateGPUTransferBuffer(r->device, &ti2);
+                        r->hudMapVertScale = 0.0f;
+                    }
+                    if (r->hudMapVertBuf && r->hudMapVertXfer && r->hudMapVertScale != ms) {
+                        float x1 = -1.0f + 2.0f * ms, yT = -1.0f + 2.0f * ms;
+                        SceneGPUHUDVertex q[6] = {
+                            {-1.0f, yT, 0, 0}, {x1, yT, 1, 0}, {x1, -1.0f, 1, 1},
+                            {-1.0f, yT, 0, 0}, {x1, -1.0f, 1, 1}, {-1.0f, -1.0f, 0, 1}
+                        };
+                        void *pm = SDL_MapGPUTransferBuffer(r->device, r->hudMapVertXfer, true);
+                        if (pm) {
+                            memcpy(pm, q, sizeof(q));
+                            SDL_UnmapGPUTransferBuffer(r->device, r->hudMapVertXfer);
+                            SDL_GPUTransferBufferLocation msrc2 = { .transfer_buffer = r->hudMapVertXfer };
+                            SDL_GPUBufferRegion mdst2 = { .buffer = r->hudMapVertBuf, .size = (Uint32)sizeof(q) };
+                            SDL_UploadToGPUBuffer(cp, &msrc2, &mdst2, true);
+                            r->hudMapVertScale = ms;
+                        }
+                    }
+                    if (r->hudMapVertScale != ms)
+                        r->hudLayerDraw[SCENE_GPU_HUD_LAYER_MAP] = false;
                 }
 
                 SDL_EndGPUCopyPass(cp);
@@ -3864,13 +3918,22 @@ static bool scene_render_gpu_end_frame_internal(SceneRendererGPU *r,
             SDL_BindGPUFragmentSamplers(hrp, 0, &tsb, 1);
             SDL_DrawGPUPrimitives(hrp, 6, 1, 0, 0);
         }
-        if (r->hudMsgDraw && r->hudMsgTex) {
-            /* Zoom messages: full quad, where the game drew them, no vignette
-             * (the HUD pass above already applied it). */
-            hpu.vigStrength = 0.0f;
+        /* HUD layers, no vignette (the HUD pass above already applied it):
+         * the map scaled towards the bottom-left, then zoom messages on top,
+         * as a full quad, where the game drew them. */
+        hpu.vigStrength = 0.0f;
+        if (r->hudLayerDraw[SCENE_GPU_HUD_LAYER_MAP] && r->hudLayerTex[SCENE_GPU_HUD_LAYER_MAP]) {
+            SDL_PushGPUFragmentUniformData(r->cmdBuf, 0, &hpu, sizeof(hpu));
+            SDL_GPUBufferBinding mvbb = {.buffer = r->hudMapVertBuf};
+            SDL_BindGPUVertexBuffers(hrp, 0, &mvbb, 1);
+            tsb.texture = r->hudLayerTex[SCENE_GPU_HUD_LAYER_MAP];
+            SDL_BindGPUFragmentSamplers(hrp, 0, &tsb, 1);
+            SDL_DrawGPUPrimitives(hrp, 6, 1, 0, 0);
+        }
+        if (r->hudLayerDraw[SCENE_GPU_HUD_LAYER_MESSAGE] && r->hudLayerTex[SCENE_GPU_HUD_LAYER_MESSAGE]) {
             SDL_PushGPUFragmentUniformData(r->cmdBuf, 0, &hpu, sizeof(hpu));
             SDL_BindGPUVertexBuffers(hrp, 0, &hvbb, 1);
-            tsb.texture = r->hudMsgTex;
+            tsb.texture = r->hudLayerTex[SCENE_GPU_HUD_LAYER_MESSAGE];
             SDL_BindGPUFragmentSamplers(hrp, 0, &tsb, 1);
             SDL_DrawGPUPrimitives(hrp, 6, 1, 0, 0);
         }
@@ -4324,7 +4387,7 @@ void scene_render_gpu_set_car_shine(SceneRendererGPU *r, float strength, float g
 {
     if (!r) return;
     r->carShine = (strength < 0.0f) ? 0.0f : (strength > 2.0f) ? 2.0f : strength;
-    r->carGlint = (glint < 0.0f) ? 0.0f : (glint > 2.0f) ? 2.0f : glint;
+    r->carGlint = (glint < 0.0f) ? 0.0f : (glint > 4.0f) ? 4.0f : glint;
     r->carDark  = (dark < 0.0f) ? 0.0f : (dark > 1.0f) ? 1.0f : dark;
 }
 
@@ -4598,45 +4661,60 @@ void scene_render_gpu_set_msaa(SceneRendererGPU *r, int level)
     if (tpf) SDL_ReleaseGPUShader(r->device, tpf);
 }
 
-void scene_render_gpu_hud_message_begin(SceneRendererGPU *r, uint8 *buf, int w, int h)
+static void hud_layer_begin(SceneRendererGPU *r, int layer, uint8 *buf, int w, int h)
 {
-    if (!r || !buf || w <= 0 || h <= 0 || r->hudMsgCapturing) return;
+    if (!r || !buf || w <= 0 || h <= 0 || r->hudLayerCapturing) return;
     if (!(r->hudScale < 0.999f || r->hudMapScale < 0.999f)) return;
-    if (w != r->hudMsgW || h != r->hudMsgH) {
-        free(r->hudMsgSave);
-        free(r->hudMsgLayer);
-        r->hudMsgSave  = malloc((size_t)w * h);
-        r->hudMsgLayer = calloc((size_t)w * h, 1);
-        r->hudMsgUsed  = false;
-        if (!r->hudMsgSave || !r->hudMsgLayer) {
-            free(r->hudMsgSave);
-            free(r->hudMsgLayer);
-            r->hudMsgSave = r->hudMsgLayer = NULL;
-            r->hudMsgW = r->hudMsgH = 0;
+    if (w != r->hudLayerW || h != r->hudLayerH) {
+        free(r->hudLayerSave);
+        r->hudLayerSave = malloc((size_t)w * h);
+        bool ok = r->hudLayerSave != NULL;
+        for (int l = 0; l < SCENE_GPU_HUD_LAYERS; l++) {
+            free(r->hudLayer[l]);
+            r->hudLayer[l] = calloc((size_t)w * h, 1);
+            r->hudLayerUsed[l] = false;
+            ok = ok && r->hudLayer[l] != NULL;
+            /* Layer textures are created at the HUD's size on first use. */
+            if (r->hudLayerTex[l])  { SDL_ReleaseGPUTexture(r->device, r->hudLayerTex[l]);          r->hudLayerTex[l]  = NULL; }
+            if (r->hudLayerXfer[l]) { SDL_ReleaseGPUTransferBuffer(r->device, r->hudLayerXfer[l]); r->hudLayerXfer[l] = NULL; }
+        }
+        if (!ok) {
+            free(r->hudLayerSave);
+            r->hudLayerSave = NULL;
+            for (int l = 0; l < SCENE_GPU_HUD_LAYERS; l++) { free(r->hudLayer[l]); r->hudLayer[l] = NULL; }
+            r->hudLayerW = r->hudLayerH = 0;
             return;
         }
-        r->hudMsgW = w;
-        r->hudMsgH = h;
-        /* The message texture is created at the HUD's size on first use. */
-        if (r->hudMsgTex)  { SDL_ReleaseGPUTexture(r->device, r->hudMsgTex);          r->hudMsgTex  = NULL; }
-        if (r->hudMsgXfer) { SDL_ReleaseGPUTransferBuffer(r->device, r->hudMsgXfer); r->hudMsgXfer = NULL; }
+        r->hudLayerW = w;
+        r->hudLayerH = h;
     }
-    memcpy(r->hudMsgSave, buf, (size_t)w * h);
-    r->hudMsgBuf = buf;
-    r->hudMsgCapturing = true;
+    memcpy(r->hudLayerSave, buf, (size_t)w * h);
+    r->hudLayerBuf = buf;
+    r->hudLayerCapturing = layer + 1;
 }
 
-void scene_render_gpu_hud_message_end(SceneRendererGPU *r)
+void scene_render_gpu_hud_message_begin(SceneRendererGPU *r, uint8 *buf, int w, int h)
 {
-    if (!r || !r->hudMsgCapturing) return;
-    r->hudMsgCapturing = false;
-    uint8 *buf = r->hudMsgBuf, *save = r->hudMsgSave, *layer = r->hudMsgLayer;
-    size_t n = (size_t)r->hudMsgW * r->hudMsgH;
+    hud_layer_begin(r, SCENE_GPU_HUD_LAYER_MESSAGE, buf, w, h);
+}
+
+void scene_render_gpu_hud_map_begin(SceneRendererGPU *r, uint8 *buf, int w, int h)
+{
+    hud_layer_begin(r, SCENE_GPU_HUD_LAYER_MAP, buf, w, h);
+}
+
+void scene_render_gpu_hud_layer_end(SceneRendererGPU *r)
+{
+    if (!r || !r->hudLayerCapturing) return;
+    int l = r->hudLayerCapturing - 1;
+    r->hudLayerCapturing = 0;
+    uint8 *buf = r->hudLayerBuf, *save = r->hudLayerSave, *layer = r->hudLayer[l];
+    size_t n = (size_t)r->hudLayerW * r->hudLayerH;
     for (size_t i = 0; i < n; i++) {
         if (buf[i] != save[i]) {
             layer[i] = buf[i];
             buf[i]   = save[i];
-            r->hudMsgUsed = true;
+            r->hudLayerUsed[l] = true;
         }
     }
 }
