@@ -4109,16 +4109,23 @@ void game_keys()
                 iProcessedKey = -1;
                 if (!fatkbhit())
                   goto EXIT_FUNCTION;               // Check if a key is available in the keyboard buffer
+                // ROLLER: raw scancode of this key, so a modifier on its own
+                // (Alt for Alt+Print Screen) doesn't skip the intro/winner screens
+                uint8 byRawKey = twoparter ? 0 : key_buffer[read_key];
+                bool bModifierKey = byRawKey == WHIP_SCANCODE_LALT || byRawKey == WHIP_SCANCODE_LCTRL
+                                 || byRawKey == WHIP_SCANCODE_LSHIFT || byRawKey == WHIP_SCANCODE_RSHIFT;
                 uiKeyCode = fatgetch();         // Get the key code from the keyboard buffer
                 if (intro || winner_mode)     // Handle intro/winner mode - any key exits these modes
                 {
                   if (uiKeyCode) {
                     uiKeyCode = -1;
-                    racing = 0;
+                    if (!bModifierKey)
+                      racing = 0;
                   } else {
                     fatgetch();
                     uiKeyCode = -1;
-                    racing = 0;
+                    if (!bModifierKey)
+                      racing = 0;
                   }
                 }
                 if (trying_to_exit)           // Handle exit confirmation (Y/N prompt)
