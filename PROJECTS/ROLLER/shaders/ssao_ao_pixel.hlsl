@@ -111,9 +111,17 @@ float4 main(PixelInput input) : SV_Target
         float2 suv = projectUV(s);
         if (any(suv < 0.0) || any(suv > 1.0))
             continue;
-        float sceneZ = viewZ(loadDepth(suv));
+        float sd = loadDepth(suv);
+        float sceneZ = viewZ(sd);
         float inRange = smoothstep(0.0, 1.0, radius / max(abs(P.z - sceneZ), 1e-3));
-        occlusion += (sceneZ <= s.z - bias ? 1.0 : 0.0) * inRange;
+        // Angle bias: only surfaces rising well above this point's own plane
+        // occlude. Without it, the shallow folds where road sections meet on
+        // a hill (a few degrees each) showed as dark lines across the road;
+        // real corners (wall and road, under cars) rise much more steeply.
+        float3 v = viewPos(suv, sd) - P;
+        float elevation = dot(v, N) / max(length(v), 1e-3);
+        float angleTerm = saturate((elevation - 0.3) / 0.4);
+        occlusion += (sceneZ <= s.z - bias ? 1.0 : 0.0) * inRange * angleTerm;
     }
 
     float ao = 1.0 - occlusion / SAMPLE_COUNT;
