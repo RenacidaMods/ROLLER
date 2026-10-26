@@ -1,4 +1,5 @@
 #include "rollerinput.h"
+#include "snapshot.h"   /* g_bSnapshotMode */
 #if !defined(IS_WASM) && !defined(ROLLER_EDITOR_CORE)
 #include "net_frontend_lobby.h"
 #endif
@@ -3808,6 +3809,8 @@ static void InputWriteDeviceFields(FILE *fp, const tInputBinding *pBinding)
 
 void InputSaveConfig(void)
 {
+  if (g_bSnapshotMode)   // headless snapshot runs use default settings: don't save them
+    return;
   FILE *fp = ROLLERfopen("ROLLER.INI", "w");
 
   if (!fp)

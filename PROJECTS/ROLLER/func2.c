@@ -3719,6 +3719,10 @@ void disable_keyboard()
 //0001AC70
 void save_fatal_config()
 {
+  // ROLLER: headless snapshot runs start from default settings; never save
+  // them over the player's own FATAL.INI / ROLLER.INI.
+  if (g_bSnapshotMode)
+    return;
   FILE *fp = ROLLERfopen("FATAL.INI", "w");
   fprintf(fp, "EngineVolume=%d\n", (4 * ((EngineVolume + 1) / 4)));
   fprintf(fp, "SFXVolume=%d\n", (4 * ((SFXVolume + 1) / 4)));
