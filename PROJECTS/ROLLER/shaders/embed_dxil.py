@@ -10,6 +10,8 @@ SHADERS = (
     "game_scene_pixel_blend",
     "game_scene_track_darken_pixel",
     "game_scene_sign_pixel",
+    "game_scene_sky_vertex",
+    "game_scene_sky_pixel",
     "game_car_vertex",
     "game_car_pixel",
     "game_hud_vertex",

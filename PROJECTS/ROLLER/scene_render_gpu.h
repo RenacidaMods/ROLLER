@@ -164,6 +164,9 @@ void scene_render_gpu_set_hud_map_scale(SceneRendererGPU *r, float scale);
  * width of the rounded strip along panel edges, 0 to 1 (0.5 default). */
 void scene_render_gpu_set_car_shine(SceneRendererGPU *r, float strength, float glint, float dark,
                                     float smooth, float bevel);
+/* Sky gradient: 0 = the original flat sky colour, 1 = default (pale horizon
+ * to deeper overhead, from the track's own sky colour), up to 2. */
+void scene_render_gpu_set_sky_gradient(SceneRendererGPU *r, float amount);
 /* Set each frame: while an in-race menu is drawn on the HUD, HUD scale is
  * suspended so the menu isn't split into separately scaled pieces. */
 void scene_render_gpu_set_hud_menu_open(SceneRendererGPU *r, bool open);

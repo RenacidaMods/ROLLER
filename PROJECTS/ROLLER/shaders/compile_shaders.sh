@@ -94,6 +94,14 @@ echo "Compiling game scene sign pixel shader (depth-check)..."
 "$SHADERCROSS" "$SCRIPT_DIR/game_scene_sign_pixel.hlsl" -s HLSL -d SPIRV -t fragment -e main -o "$OUT_DIR/game_scene_sign_pixel.spv"
 "$SHADERCROSS" "$SCRIPT_DIR/game_scene_sign_pixel.hlsl" -s HLSL -d MSL   -t fragment -e main -o "$OUT_DIR/game_scene_sign_pixel.msl"
 "$SHADERCROSS" "$SCRIPT_DIR/game_scene_sign_pixel.hlsl" -s HLSL -d DXIL  -t fragment -e main -o "$OUT_DIR/game_scene_sign_pixel.dxil"
+# Sky gradient: its own build of the scene vertex shader, so the pair's
+# Direct3D 12 signatures always come from the same compiler.
+"$SHADERCROSS" "$SCRIPT_DIR/game_scene_vertex.hlsl" -s HLSL -d SPIRV -t vertex   -e main -o "$OUT_DIR/game_scene_sky_vertex.spv"
+"$SHADERCROSS" "$SCRIPT_DIR/game_scene_vertex.hlsl" -s HLSL -d MSL   -t vertex   -e main -o "$OUT_DIR/game_scene_sky_vertex.msl"
+"$SHADERCROSS" "$SCRIPT_DIR/game_scene_vertex.hlsl" -s HLSL -d DXIL  -t vertex   -e main -o "$OUT_DIR/game_scene_sky_vertex.dxil"
+"$SHADERCROSS" "$SCRIPT_DIR/game_scene_sky_pixel.hlsl" -s HLSL -d SPIRV -t fragment -e main -o "$OUT_DIR/game_scene_sky_pixel.spv"
+"$SHADERCROSS" "$SCRIPT_DIR/game_scene_sky_pixel.hlsl" -s HLSL -d MSL   -t fragment -e main -o "$OUT_DIR/game_scene_sky_pixel.msl"
+"$SHADERCROSS" "$SCRIPT_DIR/game_scene_sky_pixel.hlsl" -s HLSL -d DXIL  -t fragment -e main -o "$OUT_DIR/game_scene_sky_pixel.dxil"
 
 echo "Compiling game car vertex shader..."
 "$SHADERCROSS" "$SCRIPT_DIR/game_car_vertex.hlsl" -s HLSL -d SPIRV -t vertex   -e main -o "$OUT_DIR/game_car_vertex.spv"
@@ -185,7 +193,7 @@ echo "Generating game_scene_shaders.h..."
 $EMBED_FN
 out_dir = r'$W_OUT'
 h = '#ifndef GAME_SCENE_SHADERS_H\n#define GAME_SCENE_SHADERS_H\n\n'
-for name in ['game_scene_vertex', 'game_scene_pixel', 'game_scene_pixel_blend', 'game_scene_track_darken_pixel', 'game_scene_sign_pixel', 'game_car_vertex', 'game_car_pixel']:
+for name in ['game_scene_vertex', 'game_scene_pixel', 'game_scene_pixel_blend', 'game_scene_track_darken_pixel', 'game_scene_sign_pixel', 'game_scene_sky_vertex', 'game_scene_sky_pixel', 'game_car_vertex', 'game_car_pixel']:
     for fmt, ext in [('spirv', 'spv'), ('msl', 'msl')]:
         p = os.path.join(out_dir, f'{name}.{ext}')
         if os.path.exists(p):

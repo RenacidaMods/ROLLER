@@ -1177,6 +1177,17 @@ static void DrawLookSettings(struct nk_context *pCtx, bool bGPU) {
       InputSaveConfig();
     }
   }
+
+  { char buf[28]; snprintf(buf, sizeof(buf), "Sky gradient %.0f%%", g_fSkyGradient * 100.0f);
+    nk_layout_row_dynamic(pCtx, DEBUG_ROW_H, 2);
+    nk_label(pCtx, buf, NK_TEXT_LEFT);
+    float fNewSky = nk_slide_float(pCtx, 0.0f, g_fSkyGradient, 2.0f, 0.05f);
+    if (fNewSky != g_fSkyGradient) {
+      g_fSkyGradient = fNewSky;
+      game_render_set_sky_gradient(g_pGameRenderer, g_fSkyGradient);
+      InputSaveConfig();
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1755,6 +1766,7 @@ static void DrawDebugPanel(DebugOverlay *pOverlay) {
         g_fHUDScale       = 1.0f;  g_fHUDMapScale    = 1.0f;
         g_fCarShine       = 1.0f;  g_fCarShineGlint  = 4.0f;  g_fCarShineDark = 0.55f;
         g_fCarShineSmooth = 1.0f;  g_fCarShineBevel = 0.25f;
+        g_fSkyGradient    = 1.0f;
         g_fMirrorFov      = 0.75f;
         g_fBrightness     = 0.0f;  g_fContrast       = 1.0f;
         g_fGamma          = 1.0f;  g_fSaturation     = 1.0f;
@@ -1780,6 +1792,7 @@ static void DrawDebugPanel(DebugOverlay *pOverlay) {
         game_render_set_hud_scale(g_pGameRenderer,       g_fHUDScale);
         game_render_set_hud_map_scale(g_pGameRenderer,   g_fHUDMapScale);
         game_render_set_car_shine(g_pGameRenderer,       g_fCarShine, g_fCarShineGlint, g_fCarShineDark, g_fCarShineSmooth, g_fCarShineBevel);
+        game_render_set_sky_gradient(g_pGameRenderer,    g_fSkyGradient);
         game_render_set_brightness(g_pGameRenderer,      g_fBrightness);
         game_render_set_contrast(g_pGameRenderer,        g_fContrast);
         game_render_set_gamma(g_pGameRenderer,           g_fGamma);

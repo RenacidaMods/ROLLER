@@ -54,6 +54,8 @@ void game_render_set_hud_map_scale(GameRenderer *renderer, float scale);
  * reflected ground/skyline darkness 0-1. */
 void game_render_set_car_shine(GameRenderer *renderer, float strength, float glint, float dark,
                                float smooth, float bevel);
+/* Sky gradient (GPU only): 0 = original flat sky, 1 = default, up to 2. */
+void game_render_set_sky_gradient(GameRenderer *renderer, float amount);
 /* FOV multiplier on top of game camera: 1.0=native, <1=zoom in, >1=zoom out */
 void game_render_set_fov_multiplier(GameRenderer *renderer, float mult);
 /* Compatibility: emulate SW rasterizer's extra-dark one-pixel track-darken quad border */

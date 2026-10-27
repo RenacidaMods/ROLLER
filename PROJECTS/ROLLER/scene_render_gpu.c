@@ -467,6 +467,8 @@ struct SceneRendererGPU {
     float carDark;         /* car shine reflected ground/skyline darkness; 1.0 = default */
     float carSmooth;       /* car shine: blend from flat panels (0) to smoothed normals (1) */
     float carBevel;        /* car shine: width of the rounded strip along panel edges, 0-1 */
+    float skyGradient;     /* sky: 0 = original flat colour, 1 = default horizon-to-zenith gradient */
+    bool  skyGradientShader; /* skyPipeline uses game_scene_sky_pixel (else the flat sfOp sky) */
     float fovMultiplier;   /* FOV multiplier applied on top of the game camera; 1.0 = native */
     bool  wireframe;       /* render geometry as wireframe */
     int   cullMode;        /* 0=default/none, 1=none, 2=back, 3=front */
@@ -930,6 +932,72 @@ void scene_render_gpu_build_vp(const SceneRendererGPU *r, float vp[16])
               effective_screen_scale(r, vpH));
 }
 
+/* General 4x4 inverse (column-major, as build_mvp). Returns false if singular. */
+static bool sky_mat4_invert(float out[16], const float m[16])
+{
+    float inv[16];
+    inv[0]  =  m[5]*m[10]*m[15] - m[5]*m[11]*m[14] - m[9]*m[6]*m[15] + m[9]*m[7]*m[14] + m[13]*m[6]*m[11] - m[13]*m[7]*m[10];
+    inv[4]  = -m[4]*m[10]*m[15] + m[4]*m[11]*m[14] + m[8]*m[6]*m[15] - m[8]*m[7]*m[14] - m[12]*m[6]*m[11] + m[12]*m[7]*m[10];
+    inv[8]  =  m[4]*m[9]*m[15]  - m[4]*m[11]*m[13] - m[8]*m[5]*m[15] + m[8]*m[7]*m[13] + m[12]*m[5]*m[11] - m[12]*m[7]*m[9];
+    inv[12] = -m[4]*m[9]*m[14]  + m[4]*m[10]*m[13] + m[8]*m[5]*m[14] - m[8]*m[6]*m[13] - m[12]*m[5]*m[10] + m[12]*m[6]*m[9];
+    inv[1]  = -m[1]*m[10]*m[15] + m[1]*m[11]*m[14] + m[9]*m[2]*m[15] - m[9]*m[3]*m[14] - m[13]*m[2]*m[11] + m[13]*m[3]*m[10];
+    inv[5]  =  m[0]*m[10]*m[15] - m[0]*m[11]*m[14] - m[8]*m[2]*m[15] + m[8]*m[3]*m[14] + m[12]*m[2]*m[11] - m[12]*m[3]*m[10];
+    inv[9]  = -m[0]*m[9]*m[15]  + m[0]*m[11]*m[13] + m[8]*m[1]*m[15] - m[8]*m[3]*m[13] - m[12]*m[1]*m[11] + m[12]*m[3]*m[9];
+    inv[13] =  m[0]*m[9]*m[14]  - m[0]*m[10]*m[13] - m[8]*m[1]*m[14] + m[8]*m[2]*m[13] + m[12]*m[1]*m[10] - m[12]*m[2]*m[9];
+    inv[2]  =  m[1]*m[6]*m[15]  - m[1]*m[7]*m[14]  - m[5]*m[2]*m[15] + m[5]*m[3]*m[14] + m[13]*m[2]*m[7]  - m[13]*m[3]*m[6];
+    inv[6]  = -m[0]*m[6]*m[15]  + m[0]*m[7]*m[14]  + m[4]*m[2]*m[15] - m[4]*m[3]*m[14] - m[12]*m[2]*m[7]  + m[12]*m[3]*m[6];
+    inv[10] =  m[0]*m[5]*m[15]  - m[0]*m[7]*m[13]  - m[4]*m[1]*m[15] + m[4]*m[3]*m[13] + m[12]*m[1]*m[7]  - m[12]*m[3]*m[5];
+    inv[14] = -m[0]*m[5]*m[14]  + m[0]*m[6]*m[13]  + m[4]*m[1]*m[14] - m[4]*m[2]*m[13] - m[12]*m[1]*m[6]  + m[12]*m[2]*m[5];
+    inv[3]  = -m[1]*m[6]*m[11]  + m[1]*m[7]*m[10]  + m[5]*m[2]*m[11] - m[5]*m[3]*m[10] - m[9]*m[2]*m[7]   + m[9]*m[3]*m[6];
+    inv[7]  =  m[0]*m[6]*m[11]  - m[0]*m[7]*m[10]  - m[4]*m[2]*m[11] + m[4]*m[3]*m[10] + m[8]*m[2]*m[7]   - m[8]*m[3]*m[6];
+    inv[11] = -m[0]*m[5]*m[11]  + m[0]*m[7]*m[9]   + m[4]*m[1]*m[11] - m[4]*m[3]*m[9]  - m[8]*m[1]*m[7]   + m[8]*m[3]*m[5];
+    inv[15] =  m[0]*m[5]*m[10]  - m[0]*m[6]*m[9]   - m[4]*m[1]*m[10] + m[4]*m[2]*m[9]  + m[8]*m[1]*m[6]   - m[8]*m[2]*m[5];
+    float det = m[0]*inv[0] + m[1]*inv[4] + m[2]*inv[8] + m[3]*inv[12];
+    if (fabsf(det) < 1e-30f) return false;
+    for (int i = 0; i < 16; i++) out[i] = inv[i] / det;
+    return true;
+}
+
+/* Fragment uniforms for the sky polygon. With the gradient shader: the
+ * inverse view-projection plus a horizon and a zenith colour made from the
+ * track's (fogged) sky colour -- paler towards the horizon, deeper overhead,
+ * scaled by the Sky gradient setting and faded out as fog takes over the
+ * sky. Otherwise the original flat sky via fog overdrive. */
+static void push_sky_uniforms(SceneRendererGPU *r, SDL_FColor skyFColor)
+{
+    if (!r->skyGradientShader) {
+        struct { float fogDensity, gamma, fogStart, saturation;
+                 float fogColor[4]; float contrast, brightness; float _pad[2]; } skyU = {
+            1e9f, 1.0f, 0.0f, 1.0f,
+            {skyFColor.r, skyFColor.g, skyFColor.b, 1.0f},
+            1.0f, 0.0f, {0, 0}
+        };
+        SDL_PushGPUFragmentUniformData(r->cmdBuf, 0, &skyU, sizeof(skyU));
+        return;
+    }
+    struct { float invVP[16]; float horizon[4]; float zenith[4]; } u;
+    float vp[16];
+    scene_render_gpu_build_vp(r, vp);
+    if (!sky_mat4_invert(u.invVP, vp)) {
+        memset(u.invVP, 0, sizeof(u.invVP));
+        u.invVP[0] = u.invVP[5] = u.invVP[10] = u.invVP[15] = 1.0f;
+    }
+    float skyFog = 1.0f - expf(-r->fogDensity * 100000.0f);
+    if (skyFog < 0.0f) skyFog = 0.0f;
+    if (skyFog > 1.0f) skyFog = 1.0f;
+    float g = r->skyGradient * (1.0f - skyFog);
+    float base[3] = { skyFColor.r, skyFColor.g, skyFColor.b };
+    static const float haze[3] = { 0.90f, 0.93f, 0.97f };
+    float toHaze = 0.55f * g;  if (toHaze > 0.95f) toHaze = 0.95f;
+    float deepen = 0.28f * g;  if (deepen > 0.8f)  deepen = 0.8f;
+    for (int i = 0; i < 3; i++) {
+        u.horizon[i] = base[i] + (haze[i] - base[i]) * toHaze;
+        u.zenith[i]  = base[i] * (1.0f - deepen);
+    }
+    u.horizon[3] = u.zenith[3] = 1.0f;
+    SDL_PushGPUFragmentUniformData(r->cmdBuf, 0, &u, sizeof(u));
+}
+
 /* The projection terms build_mvp uses for the current viewport, for passes
  * that rebuild view-space positions from depth (ssao.c):
  *   ndc.x = fovX * x / z,  ndc.y = fovY * y / z + shiftY */
@@ -995,6 +1063,8 @@ static bool find_dxil_shader(const unsigned char *pbySpirv,
     MATCH_DXIL_SHADER(game_scene_pixel_blend)
     MATCH_DXIL_SHADER(game_scene_track_darken_pixel)
     MATCH_DXIL_SHADER(game_scene_sign_pixel)
+    MATCH_DXIL_SHADER(game_scene_sky_vertex)
+    MATCH_DXIL_SHADER(game_scene_sky_pixel)
     MATCH_DXIL_SHADER(game_car_vertex)
     MATCH_DXIL_SHADER(game_car_pixel)
     MATCH_DXIL_SHADER(game_hud_vertex)
@@ -1843,6 +1913,7 @@ SceneRendererGPU *scene_render_gpu_create(SDL_GPUDevice *device, SDL_Window *win
     r->carDark         = 0.55f;
     r->carSmooth       = 1.0f;
     r->carBevel        = 0.25f;
+    r->skyGradient     = 1.0f;
     r->contrast        = 1.0f;
     r->fovMultiplier   = 1.0f;
     r->skyR = 0.25f; r->skyG = 0.45f; r->skyB = 0.75f;
@@ -2373,9 +2444,11 @@ static bool upload_sky_polygon(SceneRendererGPU *r, int *outVertCount)
     SceneGPUVertex gv[9];
     int gi = 0;
     for (int t = 0; t < n_tris; t++) {
-        gv[gi++] = (SceneGPUVertex){r->skyPoly[0][0],   r->skyPoly[0][1],   0.f, 0.5f, 0.5f};
-        gv[gi++] = (SceneGPUVertex){r->skyPoly[t+1][0], r->skyPoly[t+1][1], 0.f, 0.5f, 0.5f};
-        gv[gi++] = (SceneGPUVertex){r->skyPoly[t+2][0], r->skyPoly[t+2][1], 0.f, 0.5f, 0.5f};
+        /* uv = the vertex's NDC position, for the sky gradient shader
+         * (the flat sky samples a 1x1 colour, so uv doesn't matter there). */
+        gv[gi++] = (SceneGPUVertex){r->skyPoly[0][0],   r->skyPoly[0][1],   0.f, r->skyPoly[0][0],   r->skyPoly[0][1]};
+        gv[gi++] = (SceneGPUVertex){r->skyPoly[t+1][0], r->skyPoly[t+1][1], 0.f, r->skyPoly[t+1][0], r->skyPoly[t+1][1]};
+        gv[gi++] = (SceneGPUVertex){r->skyPoly[t+2][0], r->skyPoly[t+2][1], 0.f, r->skyPoly[t+2][0], r->skyPoly[t+2][1]};
     }
     /* cycle=true: this transfer buffer is reused for every secondary view
      * flushed within the same frame (2-player: once per player, both
@@ -2787,13 +2860,7 @@ SDL_GPUTexture *scene_render_gpu_flush_secondary_view(SceneRendererGPU *r, int s
             SDL_BindGPUGraphicsPipeline(rp, r->skyPipeline);
             float identMVP[16] = {1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1};
             SDL_PushGPUVertexUniformData(r->cmdBuf, 0, identMVP, sizeof(identMVP));
-            struct { float fogDensity, gamma, fogStart, saturation;
-                     float fogColor[4]; float contrast, brightness; float _pad[2]; } skyU = {
-                1e9f, 1.0f, 0.0f, 1.0f,
-                {skyFColor.r, skyFColor.g, skyFColor.b, 1.0f},
-                1.0f, 0.0f, {0, 0}
-            };
-            SDL_PushGPUFragmentUniformData(r->cmdBuf, 0, &skyU, sizeof(skyU));
+            push_sky_uniforms(r, skyFColor);
             SDL_GPUBufferBinding gvbb = {.buffer = r->skyVertBuf};
             SDL_BindGPUVertexBuffers(rp, 0, &gvbb, 1);
             SDL_GPUTextureSamplerBinding gtsb = {.texture = gTex, .sampler = r->samplerNearest};
@@ -3590,13 +3657,7 @@ static bool scene_render_gpu_end_frame_internal(SceneRendererGPU *r,
             SDL_BindGPUGraphicsPipeline(rp, r->skyPipeline);
             float identMVP[16] = {1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1};
             SDL_PushGPUVertexUniformData(r->cmdBuf, 0, identMVP, sizeof(identMVP));
-            struct { float fogDensity, gamma, fogStart, saturation;
-                     float fogColor[4]; float contrast, brightness; float _pad[2]; } skyU = {
-                1e9f, 1.0f, 0.0f, 1.0f,
-                {skyFColor.r, skyFColor.g, skyFColor.b, 1.0f},
-                1.0f, 0.0f, {0, 0}
-            };
-            SDL_PushGPUFragmentUniformData(r->cmdBuf, 0, &skyU, sizeof(skyU));
+            push_sky_uniforms(r, skyFColor);
             SDL_GPUBufferBinding gvbb = {.buffer = r->skyVertBuf};
             SDL_BindGPUVertexBuffers(rp, 0, &gvbb, 1);
             SDL_GPUTextureSamplerBinding gtsb = {.texture = gTex, .sampler = r->samplerNearest};
@@ -4413,6 +4474,12 @@ void scene_render_gpu_set_car_shine(SceneRendererGPU *r, float strength, float g
     r->carBevel  = (bevel < 0.0f) ? 0.0f : (bevel > 1.0f) ? 1.0f : bevel;
 }
 
+void scene_render_gpu_set_sky_gradient(SceneRendererGPU *r, float amount)
+{
+    if (!r) return;
+    r->skyGradient = (amount < 0.0f) ? 0.0f : (amount > 2.0f) ? 2.0f : amount;
+}
+
 void scene_render_gpu_set_hud_map_scale(SceneRendererGPU *r, float scale)
 {
     if (!r) return;
@@ -4460,6 +4527,16 @@ static void rebuild_scene_pipelines(SceneRendererGPU *r, SDL_GPUSampleCount sc, 
     SDL_GPUShader *sfSign = load_shader(r->device, SDL_GPU_SHADERSTAGE_FRAGMENT,
         game_scene_sign_pixel_spirv,  game_scene_sign_pixel_spirv_size,
         game_scene_sign_pixel_msl,    game_scene_sign_pixel_msl_size,    2, 1);
+    /* The sky gradient pair: game_scene_sky_vertex is game_scene_vertex.hlsl
+     * compiled with the same toolchain as game_scene_sky_pixel, so their
+     * Direct3D 12 signatures pack the same way (the older scene vertex
+     * shader puts SV_Position first, newer builds put it last). */
+    SDL_GPUShader *svSky = load_shader(r->device, SDL_GPU_SHADERSTAGE_VERTEX,
+        game_scene_sky_vertex_spirv,  game_scene_sky_vertex_spirv_size,
+        game_scene_sky_vertex_msl,    game_scene_sky_vertex_msl_size,    0, 1);
+    SDL_GPUShader *sfSky = load_shader(r->device, SDL_GPU_SHADERSTAGE_FRAGMENT,
+        game_scene_sky_pixel_spirv,   game_scene_sky_pixel_spirv_size,
+        game_scene_sky_pixel_msl,     game_scene_sky_pixel_msl_size,     1, 1);
     if (sv && sfOp && sfBl) {
         r->opaquePipeline        = make_scene_pipeline(r, sv, sfOp, false, false, 0.0f,    0.0f,  sc, fm);
         r->blendPipeline         = make_scene_pipeline(r, sv, sfBl, true,  true,  0.0f,    0.0f,  sc, fm);
@@ -4471,7 +4548,12 @@ static void rebuild_scene_pipelines(SceneRendererGPU *r, SDL_GPUSampleCount sc, 
         r->bfWallPipeline        = make_scene_pipeline  (r, sv, sfBl, false, true,  -20.0f, 0.0f, sc, fm);
         r->shadowPipeline        = make_shadow_pipeline (r, sv, sfBl,               sc, fm);
         r->trackDarkenPipeline   = make_track_darken_pipeline(r, sv, sfOp,          sc, fm);
-        r->skyPipeline           = make_sky_pipeline    (r, sv, sfOp, sc);
+        r->skyPipeline           = (svSky && sfSky) ? make_sky_pipeline(r, svSky, sfSky, sc) : NULL;
+        r->skyGradientShader     = r->skyPipeline != NULL;
+        if (!r->skyPipeline) {
+            SDL_Log("scene_render_gpu: sky gradient unavailable (%s), using the flat sky", SDL_GetError());
+            r->skyPipeline       = make_sky_pipeline    (r, sv, sfOp, sc);
+        }
         r->treePipeline          = make_tree_pipeline   (r, sv, sfOp,               sc, fm);
     }
     if (sv && sfTrack) {
@@ -4486,6 +4568,8 @@ static void rebuild_scene_pipelines(SceneRendererGPU *r, SDL_GPUSampleCount sc, 
     if (sfBl)   SDL_ReleaseGPUShader(r->device, sfBl);
     if (sfTrack) SDL_ReleaseGPUShader(r->device, sfTrack);
     if (sfSign) SDL_ReleaseGPUShader(r->device, sfSign);
+    if (sfSky)  SDL_ReleaseGPUShader(r->device, sfSky);
+    if (svSky)  SDL_ReleaseGPUShader(r->device, svSky);
 }
 
 void scene_render_gpu_set_wireframe(SceneRendererGPU *r, bool enabled)
@@ -4620,6 +4704,16 @@ void scene_render_gpu_set_msaa(SceneRendererGPU *r, int level)
     SDL_GPUShader *sfSign = load_shader(r->device, SDL_GPU_SHADERSTAGE_FRAGMENT,
         game_scene_sign_pixel_spirv,  game_scene_sign_pixel_spirv_size,
         game_scene_sign_pixel_msl,    game_scene_sign_pixel_msl_size,    2, 1);
+    /* The sky gradient pair: game_scene_sky_vertex is game_scene_vertex.hlsl
+     * compiled with the same toolchain as game_scene_sky_pixel, so their
+     * Direct3D 12 signatures pack the same way (the older scene vertex
+     * shader puts SV_Position first, newer builds put it last). */
+    SDL_GPUShader *svSky = load_shader(r->device, SDL_GPU_SHADERSTAGE_VERTEX,
+        game_scene_sky_vertex_spirv,  game_scene_sky_vertex_spirv_size,
+        game_scene_sky_vertex_msl,    game_scene_sky_vertex_msl_size,    0, 1);
+    SDL_GPUShader *sfSky = load_shader(r->device, SDL_GPU_SHADERSTAGE_FRAGMENT,
+        game_scene_sky_pixel_spirv,   game_scene_sky_pixel_spirv_size,
+        game_scene_sky_pixel_msl,     game_scene_sky_pixel_msl_size,     1, 1);
     SDL_GPUFillMode fm = r->wireframe ? SDL_GPU_FILLMODE_LINE : SDL_GPU_FILLMODE_FILL;
     if (sv && sfOp && sfBl) {
         r->opaquePipeline   = make_scene_pipeline(r, sv, sfOp, false, false, 0.0f,   0.0f, sc, fm);
@@ -4632,7 +4726,12 @@ void scene_render_gpu_set_msaa(SceneRendererGPU *r, int level)
         r->bfWallPipeline   = make_scene_pipeline  (r, sv, sfBl, false, true,  -20.0f, 0.0f, sc, fm);
         r->shadowPipeline   = make_shadow_pipeline(r, sv, sfBl,       sc,    fm);
         r->trackDarkenPipeline = make_track_darken_pipeline(r, sv, sfOp, sc, fm);
-        r->skyPipeline      = make_sky_pipeline(r, sv, sfOp, sc);
+        r->skyPipeline      = (svSky && sfSky) ? make_sky_pipeline(r, svSky, sfSky, sc) : NULL;
+        r->skyGradientShader = r->skyPipeline != NULL;
+        if (!r->skyPipeline) {
+            SDL_Log("scene_render_gpu: sky gradient unavailable (%s), using the flat sky", SDL_GetError());
+            r->skyPipeline  = make_sky_pipeline(r, sv, sfOp, sc);
+        }
     }
     if (sv && sfTrack) {
         r->trackDarkenBorderPipeline = make_track_darken_pipeline(r, sv, sfTrack, sc, fm);
@@ -4646,6 +4745,8 @@ void scene_render_gpu_set_msaa(SceneRendererGPU *r, int level)
     if (sfBl)   SDL_ReleaseGPUShader(r->device, sfBl);
     if (sfTrack) SDL_ReleaseGPUShader(r->device, sfTrack);
     if (sfSign) SDL_ReleaseGPUShader(r->device, sfSign);
+    if (sfSky)  SDL_ReleaseGPUShader(r->device, sfSky);
+    if (svSky)  SDL_ReleaseGPUShader(r->device, svSky);
 
     SDL_GPUShader *cv = load_shader(r->device, SDL_GPU_SHADERSTAGE_VERTEX,
         game_car_vertex_spirv, game_car_vertex_spirv_size,
@@ -6654,6 +6755,8 @@ void scene_render_gpu_quad_world_legacy(SceneRendererGPU *r,
         kind = SCENE_GPU_DRAW_SHADOW;
     else if (isTrackDarken)
         kind = SCENE_GPU_DRAW_TRACK_DARKEN;
+    else if (isCloud && !cloudNearest)
+        kind = SCENE_GPU_DRAW_BLEND;   /* HD clouds have soft see-through edges: blend, don't cut out at 50% */
     else if (surfaceFlags & SURFACE_FLAG_TRANSPARENT)
         kind = SCENE_GPU_DRAW_BLEND;
     else if ((surfaceFlags & SURFACE_FLAG_PARTIAL_TRANS) && (surfaceFlags & SURFACE_FLAG_FLIP_BACKFACE))
