@@ -866,7 +866,7 @@ static bool gpu_reference_depth_check(SDL_GPUDevice *pDevice,
         -0.92f, 0.78f, 0.92f, -0.78f, 1000.0f, uiWidth, uiHeight);
     scene_render_gpu_queue_car_draw(pRenderer, pVertexBuffer, pIndexBuffer,
                                     pMeshTexture, 0,
-                                    (int)State.uiIndexCount, afIdentity, NULL);
+                                    (int)State.uiIndexCount, afIdentity, NULL, NULL);
     if (!scene_render_gpu_end_frame_readback(
             pRenderer, pbyPixels, uiBufferSize, uiWidth * 4u,
             uiWidth, uiHeight)) {

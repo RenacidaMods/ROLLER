@@ -903,9 +903,10 @@ void game_render_hw_draw_car(GameRendererHardware       *r,
         mat4_mul(mvp, vp, Mcar_chunk);
         float shine[12];
         car_shine_inputs(shine, vp, Mcar_chunk);
+        scene_render_gpu_set_car_shadows_allowed(scene, !(textures_off & TEX_OFF_SHADOWS));
         scene_render_gpu_queue_car_draw(scene,
             vertBuf, mesh->indexBuf, mesh->atlas,
-            0, mesh->bodyIndexCount, mvp, shine);
+            0, mesh->bodyIndexCount, mvp, shine, Mcar_chunk);
 
         /* Shadow: use physical pose (no camera lean offsets) so shadow corners
          * stay exactly on the road surface.  adjPose tilts the quad slightly
@@ -961,9 +962,10 @@ void game_render_hw_draw_car(GameRendererHardware       *r,
         mat4_mul(mvp, vp, M);
         float shine[12];
         car_shine_inputs(shine, vp, M);
+        scene_render_gpu_set_car_shadows_allowed(scene, !(textures_off & TEX_OFF_SHADOWS));
         scene_render_gpu_queue_car_draw(scene,
             vertBuf, mesh->indexBuf, mesh->atlas,
-            0, mesh->bodyIndexCount, mvp, shine);
+            0, mesh->bodyIndexCount, mvp, shine, M);
 
         /* Shadow: replicate car.c:1339-1431's full branch choice for this
          * car's own airborne shadow (3 cases, matching SW exactly):

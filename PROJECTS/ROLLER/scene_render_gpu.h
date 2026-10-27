@@ -170,6 +170,10 @@ void scene_render_gpu_set_sky_gradient(SceneRendererGPU *r, float amount);
 /* Sun shading on track, walls, buildings, signs and cars: surfaces turned
  * away from the sun darken, by up to 45% at 1.0 (0 = off, 0.6 default). */
 void scene_render_gpu_set_sun_shade(SceneRendererGPU *r, float strength);
+/* Real car shadows (shadow-mapped from the same sun): darkness 0-1, 0 =
+ * the classic flat shadows. `allowed` follows the game's shadows option. */
+void scene_render_gpu_set_car_shadows(SceneRendererGPU *r, float darkness);
+void scene_render_gpu_set_car_shadows_allowed(SceneRendererGPU *r, bool allowed);
 /* Set each frame: while an in-race menu is drawn on the HUD, HUD scale is
  * suspended so the menu isn't split into separately scaled pieces. */
 void scene_render_gpu_set_hud_menu_open(SceneRendererGPU *r, bool open);
@@ -281,7 +285,8 @@ void scene_render_gpu_queue_car_draw(SceneRendererGPU *r,
                                       int               firstIndex,
                                       int               idxCount,
                                       const float       mvp[16],
-                                      const float       shine[12]);
+                                      const float       shine[12],
+                                      const float       world[16]);   /* model -> world, NULL: no car shadow */
 
 /* Queue a car shadow draw — uses carShadowPipeline (LESS_OR_EQUAL, no depth write, biased). */
 void scene_render_gpu_queue_car_shadow_draw(SceneRendererGPU *r,

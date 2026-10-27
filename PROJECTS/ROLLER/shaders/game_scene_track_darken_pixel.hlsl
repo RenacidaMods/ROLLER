@@ -1,6 +1,11 @@
 Texture2D sceneTexture : register(t0, space2);
 SamplerState sceneSampler : register(s0, space2);
 
+/* Car shadow map (depth from the sun's view, cars only; see
+ * scene_render_gpu.c). Load()/Gather() only, so the sampler is a formality. */
+Texture2D<float> shadowMap     : register(t1, space2);
+SamplerState     shadowSampler : register(s1, space2);
+
 cbuffer ScenePixelUniforms : register(b0, space3)
 {
     float  fogDensity;
@@ -18,6 +23,8 @@ cbuffer ScenePixelUniforms : register(b0, space3)
     float  carSun;
     float4 sunDir;     /* xyz: towards the sun (world); w: sun shading strength, 0 = off */
     float4 camPos;     /* camera position (world) */
+    float4 shadowParams;      /* x: car shadow darkness (0 = off), y: depth bias */
+    float4x4 lightViewProj;   /* world -> the sun's view of the car shadow map */
 };
 
 struct PixelInput

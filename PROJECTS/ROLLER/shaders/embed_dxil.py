@@ -14,6 +14,7 @@ SHADERS = (
     "game_scene_sky_pixel",
     "game_car_vertex",
     "game_car_pixel",
+    "game_car_shadow_caster_pixel",
     "game_hud_vertex",
     "game_hud_pixel",
     "game_particle_vertex",

@@ -181,6 +181,8 @@ typedef struct {
      * world horizontal axis in the car's own coordinates, xyz + unused w.
      * Zero for shadows. */
     float           shine[12];
+    float           world[16];   /* model -> world, for the car shadow map */
+    bool            hasWorld;
 } SceneGPUCarDrawCmd;
 
 /* --------------------------------------------------------------------------
@@ -469,6 +471,13 @@ struct SceneRendererGPU {
     float carBevel;        /* car shine: width of the rounded strip along panel edges, 0-1 */
     float skyGradient;     /* sky: 0 = original flat colour, 1 = default horizon-to-zenith gradient */
     float sunShade;        /* sun shading strength on walls, buildings, track and cars, 0 = off */
+    float carShadowStrength; /* real car shadows: darkness 0-1, 0 = classic flat shadows */
+    bool  carShadowsAllowed; /* the game's shadows option (TEX_OFF_SHADOWS clears it) */
+    bool  shadowCasterFailed;
+    bool  shadowMapValid;    /* shadowMapTex holds this (or last) frame's cars */
+    SDL_GPUTexture *shadowMapTex;
+    SDL_GPUGraphicsPipeline *shadowCasterPipeline;
+    float lightVP[16];
     bool  skyGradientShader; /* skyPipeline uses game_scene_sky_pixel (else the flat sfOp sky) */
     float fovMultiplier;   /* FOV multiplier applied on top of the game camera; 1.0 = native */
     bool  wireframe;       /* render geometry as wireframe */
@@ -1023,6 +1032,226 @@ static void fill_sun_uniforms(const SceneRendererGPU *r, float sun[4], float cam
     }
 }
 
+/* ---- Real car shadows ----------------------------------------------------
+ * Each frame the car bodies are drawn from the sun's view (an orthographic
+ * box around the area just ahead of the camera) into shadowMapTex, depth
+ * only. The world pixel shaders project their own position into that view
+ * and darken where a car is nearer the sun (carShadowLit in
+ * game_scene_pixel.hlsl). Only cars cast, so the road never compares with
+ * itself and needs almost no bias. While this is on, the classic flat car
+ * shadows aren't drawn. */
+#define SCENE_GPU_SHADOW_MAP_SIZE  2048
+#define SCENE_GPU_SHADOW_HALF      6000.0f   /* half-width of the box, world units (~4.5 car lengths) */
+#define SCENE_GPU_SHADOW_DEPTH     30000.0f  /* depth range along the sun */
+#define SCENE_GPU_SHADOW_AHEAD     2000.0f   /* box centre this far ahead of the camera */
+
+static SDL_GPUShader *load_shader(SDL_GPUDevice *dev, SDL_GPUShaderStage stage,
+                                   const unsigned char *spirv, unsigned int spirv_sz,
+                                   const unsigned char *msl,   unsigned int msl_sz,
+                                   int num_samplers, int num_uniforms);
+
+static bool real_car_shadows_wanted(const SceneRendererGPU *r)
+{
+    return r->carShadowStrength > 0.0f && r->carShadowsAllowed && !r->shadowCasterFailed;
+}
+
+static void sky_mat4_mul(float out[16], const float a[16], const float b[16])
+{
+    for (int c = 0; c < 4; c++)
+        for (int rr = 0; rr < 4; rr++) {
+            float sum = 0.0f;
+            for (int k = 0; k < 4; k++)
+                sum += a[k * 4 + rr] * b[c * 4 + k];
+            out[c * 4 + rr] = sum;
+        }
+}
+
+static bool ensure_shadow_caster(SceneRendererGPU *r)
+{
+    if (r->shadowCasterFailed) return false;
+    if (r->shadowMapTex && r->shadowCasterPipeline) return true;
+    if (!r->shadowMapTex) {
+        SDL_GPUTextureCreateInfo ti = {
+            .type                 = SDL_GPU_TEXTURETYPE_2D,
+            .format               = SDL_GPU_TEXTUREFORMAT_D32_FLOAT,
+            .usage                = SDL_GPU_TEXTUREUSAGE_DEPTH_STENCIL_TARGET | SDL_GPU_TEXTUREUSAGE_SAMPLER,
+            .width                = SCENE_GPU_SHADOW_MAP_SIZE,
+            .height               = SCENE_GPU_SHADOW_MAP_SIZE,
+            .layer_count_or_depth = 1,
+            .num_levels           = 1
+        };
+        r->shadowMapTex = SDL_CreateGPUTexture(r->device, &ti);
+    }
+    if (r->shadowMapTex && !r->shadowCasterPipeline) {
+        SDL_GPUShader *cv = load_shader(r->device, SDL_GPU_SHADERSTAGE_VERTEX,
+            game_car_vertex_spirv, game_car_vertex_spirv_size,
+            game_car_vertex_msl,   game_car_vertex_msl_size, 0, 1);
+        SDL_GPUShader *cf = load_shader(r->device, SDL_GPU_SHADERSTAGE_FRAGMENT,
+            game_car_shadow_caster_pixel_spirv, game_car_shadow_caster_pixel_spirv_size,
+            game_car_shadow_caster_pixel_msl,   game_car_shadow_caster_pixel_msl_size, 0, 0);
+        if (cv && cf) {
+            SDL_GPUVertexAttribute attrs[6] = {
+                {.location=0, .format=SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3,
+                 .offset=(Uint32)offsetof(SceneGPUMeshVertex, position)},
+                {.location=1, .format=SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2,
+                 .offset=(Uint32)offsetof(SceneGPUMeshVertex, uv)},
+                {.location=2, .format=SDL_GPU_VERTEXELEMENTFORMAT_FLOAT4,
+                 .offset=(Uint32)offsetof(SceneGPUMeshVertex, color)},
+                {.location=3, .format=SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3,
+                 .offset=(Uint32)offsetof(SceneGPUMeshVertex, normal)},
+                {.location=4, .format=SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2,
+                 .offset=(Uint32)offsetof(SceneGPUMeshVertex, edge)},
+                {.location=5, .format=SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3,
+                 .offset=(Uint32)offsetof(SceneGPUMeshVertex, bevel)}
+            };
+            SDL_GPUVertexBufferDescription binding = {
+                .pitch = sizeof(SceneGPUMeshVertex),
+                .input_rate = SDL_GPU_VERTEXINPUTRATE_VERTEX
+            };
+            SDL_GPUGraphicsPipelineCreateInfo pi = {
+                .vertex_shader   = cv,
+                .fragment_shader = cf,
+                .primitive_type  = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST,
+                .vertex_input_state = {
+                    .vertex_buffer_descriptions = &binding,
+                    .num_vertex_buffers         = 1,
+                    .vertex_attributes          = attrs,
+                    .num_vertex_attributes      = 6
+                },
+                .rasterizer_state = {
+                    .fill_mode  = SDL_GPU_FILLMODE_FILL,
+                    .front_face = SDL_GPU_FRONTFACE_COUNTER_CLOCKWISE,
+                    .cull_mode  = SDL_GPU_CULLMODE_NONE
+                },
+                .multisample_state = { .sample_count = SDL_GPU_SAMPLECOUNT_1 },
+                .depth_stencil_state = {
+                    .enable_depth_test  = true,
+                    .enable_depth_write = true,
+                    .compare_op         = SDL_GPU_COMPAREOP_LESS
+                },
+                .target_info = {
+                    .num_color_targets        = 0,
+                    .has_depth_stencil_target = true,
+                    .depth_stencil_format     = SDL_GPU_TEXTUREFORMAT_D32_FLOAT
+                }
+            };
+            r->shadowCasterPipeline = SDL_CreateGPUGraphicsPipeline(r->device, &pi);
+        }
+        if (cv) SDL_ReleaseGPUShader(r->device, cv);
+        if (cf) SDL_ReleaseGPUShader(r->device, cf);
+    }
+    if (!r->shadowMapTex || !r->shadowCasterPipeline) {
+        SDL_Log("scene_render_gpu: real car shadows unavailable (%s), using the classic shadows", SDL_GetError());
+        r->shadowCasterFailed = true;
+        return false;
+    }
+    return true;
+}
+
+/* The sun's view: an orthographic box SCENE_GPU_SHADOW_HALF wide each way
+ * around a point just ahead of the camera, looking down the sun direction
+ * (the same sun as the shading and glint). The centre is snapped to whole
+ * shadow-map texels so shadows don't shimmer as the camera moves. */
+static void build_light_vp(const SceneRendererGPU *r, float out[16])
+{
+    float sun[4], cam[4];
+    fill_sun_uniforms(r, sun, cam);
+    float f[3] = { -sun[0], -sun[1], -sun[2] };          /* light looks along -sun */
+    float up[3] = { 0.0f, 0.0f, 1.0f };
+    float rgt[3] = { f[1]*up[2] - f[2]*up[1], f[2]*up[0] - f[0]*up[2], f[0]*up[1] - f[1]*up[0] };
+    float rl = sqrtf(rgt[0]*rgt[0] + rgt[1]*rgt[1] + rgt[2]*rgt[2]);
+    if (rl < 1e-4f) { rgt[0] = 1.0f; rgt[1] = 0.0f; rgt[2] = 0.0f; rl = 1.0f; }
+    for (int i = 0; i < 3; i++) rgt[i] /= rl;
+    float u[3] = { rgt[1]*f[2] - rgt[2]*f[1], rgt[2]*f[0] - rgt[0]*f[2], rgt[0]*f[1] - rgt[1]*f[0] };
+
+    /* Centre: ahead of the camera along its level forward direction. */
+    float vp[16], ivp[16], fwd[3] = { 0.0f, 0.0f, 0.0f };
+    scene_render_gpu_build_vp(r, vp);
+    if (sky_mat4_invert(ivp, vp)) {
+        float w = ivp[3]*0.0f + ivp[7]*0.0f + ivp[11]*0.5f + ivp[15];
+        if (fabsf(w) > 1e-20f) {
+            for (int i = 0; i < 3; i++)
+                fwd[i] = (ivp[8 + i]*0.5f + ivp[12 + i]) / w - cam[i];
+        }
+    }
+    fwd[2] = 0.0f;
+    float fl = sqrtf(fwd[0]*fwd[0] + fwd[1]*fwd[1]);
+    float c[3] = { cam[0], cam[1], cam[2] };
+    if (fl > 1e-4f) { c[0] += fwd[0] / fl * SCENE_GPU_SHADOW_AHEAD; c[1] += fwd[1] / fl * SCENE_GPU_SHADOW_AHEAD; }
+
+    /* Snap the centre to the texel grid in the light's own axes. */
+    float texelW = 2.0f * SCENE_GPU_SHADOW_HALF / (float)SCENE_GPU_SHADOW_MAP_SIZE;
+    float cx = rgt[0]*c[0] + rgt[1]*c[1] + rgt[2]*c[2];
+    float cy = u[0]*c[0] + u[1]*c[1] + u[2]*c[2];
+    float cz = f[0]*c[0] + f[1]*c[1] + f[2]*c[2];
+    cx = floorf(cx / texelW) * texelW;
+    cy = floorf(cy / texelW) * texelW;
+    float zNear = cz - SCENE_GPU_SHADOW_DEPTH * 0.5f;   /* along f: depth 0 here, 1 at +DEPTH */
+
+    float sx = 1.0f / SCENE_GPU_SHADOW_HALF, sz = 1.0f / SCENE_GPU_SHADOW_DEPTH;
+    /* Column-major, as build_mvp: x' = (r.p - cx)/half, y' = (u.p - cy)/half, z' = (f.p - zNear)/depth */
+    out[0] = rgt[0]*sx; out[4] = rgt[1]*sx; out[8]  = rgt[2]*sx; out[12] = -cx*sx;
+    out[1] = u[0]*sx;   out[5] = u[1]*sx;   out[9]  = u[2]*sx;   out[13] = -cy*sx;
+    out[2] = f[0]*sz;   out[6] = f[1]*sz;   out[10] = f[2]*sz;   out[14] = -zNear*sz;
+    out[3] = 0.0f;      out[7] = 0.0f;      out[11] = 0.0f;      out[15] = 1.0f;
+}
+
+/* Depth-only pass: every car body queued this frame, from the sun's view. */
+static void render_car_shadow_map(SceneRendererGPU *r)
+{
+    r->shadowMapValid = false;
+    if (!real_car_shadows_wanted(r) || r->carDrawCount == 0) return;
+    if (!ensure_shadow_caster(r)) return;
+    build_light_vp(r, r->lightVP);
+
+    SDL_GPUDepthStencilTargetInfo di = {
+        .texture     = r->shadowMapTex,
+        .load_op     = SDL_GPU_LOADOP_CLEAR,
+        .store_op    = SDL_GPU_STOREOP_STORE,
+        .clear_depth = 1.0f
+    };
+    SDL_GPURenderPass *sp = SDL_BeginGPURenderPass(r->cmdBuf, NULL, 0, &di);
+    if (!sp) return;
+    SDL_GPUViewport svp = { 0.0f, 0.0f, (float)SCENE_GPU_SHADOW_MAP_SIZE, (float)SCENE_GPU_SHADOW_MAP_SIZE, 0.0f, 1.0f };
+    SDL_SetGPUViewport(sp, &svp);
+    SDL_BindGPUGraphicsPipeline(sp, r->shadowCasterPipeline);
+    for (int i = 0; i < r->carDrawCount; i++) {
+        SceneGPUCarDrawCmd *cmd = &r->carDraws[i];
+        if (!cmd->hasWorld || !cmd->vertBuf || !cmd->idxBuf) continue;
+        struct { float mvp[16]; float shine[12]; } u;
+        sky_mat4_mul(u.mvp, r->lightVP, cmd->world);
+        memset(u.shine, 0, sizeof(u.shine));
+        SDL_PushGPUVertexUniformData(r->cmdBuf, 0, &u, sizeof(u));
+        SDL_GPUBufferBinding vb = {.buffer = cmd->vertBuf};
+        SDL_BindGPUVertexBuffers(sp, 0, &vb, 1);
+        SDL_GPUBufferBinding ib = {.buffer = cmd->idxBuf};
+        SDL_BindGPUIndexBuffer(sp, &ib, SDL_GPU_INDEXELEMENTSIZE_32BIT);
+        SDL_DrawGPUIndexedPrimitives(sp, (Uint32)cmd->idxCount, 1, (Uint32)cmd->firstIndex, 0, 0);
+    }
+    SDL_EndGPURenderPass(sp);
+    r->shadowMapValid = true;
+}
+
+/* Slot 1 for the world pixel shaders: the shadow map, or any texture as a
+ * placeholder when there isn't one (the shader doesn't read it then). */
+static SDL_GPUTextureSamplerBinding shadow_binding(const SceneRendererGPU *r)
+{
+    SDL_GPUTextureSamplerBinding b = {
+        .texture = r->shadowMapTex ? r->shadowMapTex : r->shadowTex,
+        .sampler = r->samplerNearest
+    };
+    return b;
+}
+
+static void fill_shadow_uniforms(const SceneRendererGPU *r, float shadow[4], float lightVP[16])
+{
+    bool on = real_car_shadows_wanted(r) && r->shadowMapValid;
+    shadow[0] = on ? r->carShadowStrength : 0.0f;
+    shadow[1] = 4.0f / SCENE_GPU_SHADOW_DEPTH;   /* ~4 units of depth bias */
+    shadow[2] = shadow[3] = 0.0f;
+    memcpy(lightVP, r->lightVP, 16 * sizeof(float));
+}
+
 /* The projection terms build_mvp uses for the current viewport, for passes
  * that rebuild view-space positions from depth (ssao.c):
  *   ndc.x = fovX * x / z,  ndc.y = fovY * y / z + shiftY */
@@ -1092,6 +1321,7 @@ static bool find_dxil_shader(const unsigned char *pbySpirv,
     MATCH_DXIL_SHADER(game_scene_sky_pixel)
     MATCH_DXIL_SHADER(game_car_vertex)
     MATCH_DXIL_SHADER(game_car_pixel)
+    MATCH_DXIL_SHADER(game_car_shadow_caster_pixel)
     MATCH_DXIL_SHADER(game_hud_vertex)
     MATCH_DXIL_SHADER(game_hud_pixel)
     MATCH_DXIL_SHADER(game_particle_vertex)
@@ -1940,6 +2170,8 @@ SceneRendererGPU *scene_render_gpu_create(SDL_GPUDevice *device, SDL_Window *win
     r->carBevel        = 0.25f;
     r->skyGradient     = 1.0f;
     r->sunShade        = 0.6f;
+    r->carShadowStrength = 0.6f;
+    r->carShadowsAllowed = true;
     r->contrast        = 1.0f;
     r->fovMultiplier   = 1.0f;
     r->skyR = 0.25f; r->skyG = 0.45f; r->skyB = 0.75f;
@@ -2230,6 +2462,8 @@ void scene_render_gpu_destroy(SceneRendererGPU *r)
     if (r->trackDarkenBorderPipeline) SDL_ReleaseGPUGraphicsPipeline(r->device, r->trackDarkenBorderPipeline);
     if (r->carPipeline)         SDL_ReleaseGPUGraphicsPipeline(r->device, r->carPipeline);
     if (r->carShadowPipeline)   SDL_ReleaseGPUGraphicsPipeline(r->device, r->carShadowPipeline);
+    if (r->shadowCasterPipeline) SDL_ReleaseGPUGraphicsPipeline(r->device, r->shadowCasterPipeline);
+    if (r->shadowMapTex)        SDL_ReleaseGPUTexture(r->device, r->shadowMapTex);
     if (r->skyPipeline)         SDL_ReleaseGPUGraphicsPipeline(r->device, r->skyPipeline);
     if (r->hudPipeline)      SDL_ReleaseGPUGraphicsPipeline(r->device, r->hudPipeline);
     if (r->particlePipeline)    SDL_ReleaseGPUGraphicsPipeline(r->device, r->particlePipeline);
@@ -2890,7 +3124,8 @@ SDL_GPUTexture *scene_render_gpu_flush_secondary_view(SceneRendererGPU *r, int s
             SDL_GPUBufferBinding gvbb = {.buffer = r->skyVertBuf};
             SDL_BindGPUVertexBuffers(rp, 0, &gvbb, 1);
             SDL_GPUTextureSamplerBinding gtsb = {.texture = gTex, .sampler = r->samplerNearest};
-            SDL_BindGPUFragmentSamplers(rp, 0, &gtsb, 1);
+            SDL_GPUTextureSamplerBinding skyTsb[2] = { gtsb, shadow_binding(r) };
+            SDL_BindGPUFragmentSamplers(rp, 0, skyTsb, r->skyGradientShader ? 1 : 2);
             SDL_DrawGPUPrimitives(rp, skyVertCount, 1, 0, 0);
         }
     }
@@ -2910,6 +3145,8 @@ SDL_GPUTexture *scene_render_gpu_flush_secondary_view(SceneRendererGPU *r, int s
         float carShine, carGlint, carDark, carSmooth, carBevel, carSun;  /* car*: game_car_pixel.hlsl only */
         float sun[4];     /* xyz towards the sun (world), w = sun shading strength */
         float camPos[4];  /* camera position (world), to face the shading normal */
+        float shadow[4];  /* x: car shadow darkness (0 = off), y: depth bias */
+        float lightVP[16];/* world -> the sun's view of the car shadow map */
     } pfu = {
         r->fogDensity,
         (r->gamma > 0.0f)       ? r->gamma       : 1.0f,
@@ -2919,9 +3156,11 @@ SDL_GPUTexture *scene_render_gpu_flush_secondary_view(SceneRendererGPU *r, int s
         (r->contrast > 0.0f)    ? r->contrast     : 1.0f,
         r->brightness,
         0.0f, r->carGlint, r->carDark, r->carSmooth, r->carBevel, 0.0f,
-        {0.0f, 0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 0.0f, 0.0f}
+        {0.0f, 0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 0.0f, 0.0f},
+        {0.0f, 0.0f, 0.0f, 0.0f}, {0}
     };
     fill_sun_uniforms(r, pfu.sun, pfu.camPos);
+    fill_shadow_uniforms(r, pfu.shadow, pfu.lightVP);
     SDL_PushGPUFragmentUniformData(r->cmdBuf, 0, &pfu, sizeof(pfu));
 
     /* World-space quads (SceneGPUDrawCmd) share one VP (no per-object model
@@ -2931,26 +3170,28 @@ SDL_GPUTexture *scene_render_gpu_flush_secondary_view(SceneRendererGPU *r, int s
     scene_render_gpu_build_vp(r, viewVP);
     SDL_PushGPUVertexUniformData(r->cmdBuf, 0, viewVP, sizeof(viewVP));
 
-    if (r->opaquePipeline)     { SDL_BindGPUGraphicsPipeline(rp, r->opaquePipeline);     draw_cmd_kind(r, rp, &tsb, NULL, drawOrder, SCENE_GPU_DRAW_OPAQUE); }
-    if (r->wallPipeline)       { SDL_BindGPUGraphicsPipeline(rp, r->wallPipeline);       draw_cmd_kind(r, rp, &tsb, NULL, drawOrder, SCENE_GPU_DRAW_WALL); }
-    if (r->bfWallPipeline)     { SDL_BindGPUGraphicsPipeline(rp, r->bfWallPipeline);     draw_cmd_kind(r, rp, &tsb, NULL, drawOrder, SCENE_GPU_DRAW_BF_WALL); }
-    if (r->buildingPipeline)   { SDL_BindGPUGraphicsPipeline(rp, r->buildingPipeline);   draw_cmd_kind(r, rp, &tsb, NULL, drawOrder, SCENE_GPU_DRAW_BUILDING); }
-    if (r->bfBuildingPipeline) { SDL_BindGPUGraphicsPipeline(rp, r->bfBuildingPipeline); draw_cmd_kind(r, rp, &tsb, NULL, drawOrder, SCENE_GPU_DRAW_BF_BUILDING); }
+    SDL_GPUTextureSamplerBinding shadowTsb = shadow_binding(r);   /* slot 1: car shadow map */
+    if (r->opaquePipeline)     { SDL_BindGPUGraphicsPipeline(rp, r->opaquePipeline);     draw_cmd_kind(r, rp, &tsb, &shadowTsb, drawOrder, SCENE_GPU_DRAW_OPAQUE); }
+    if (r->wallPipeline)       { SDL_BindGPUGraphicsPipeline(rp, r->wallPipeline);       draw_cmd_kind(r, rp, &tsb, &shadowTsb, drawOrder, SCENE_GPU_DRAW_WALL); }
+    if (r->bfWallPipeline)     { SDL_BindGPUGraphicsPipeline(rp, r->bfWallPipeline);     draw_cmd_kind(r, rp, &tsb, &shadowTsb, drawOrder, SCENE_GPU_DRAW_BF_WALL); }
+    if (r->buildingPipeline)   { SDL_BindGPUGraphicsPipeline(rp, r->buildingPipeline);   draw_cmd_kind(r, rp, &tsb, &shadowTsb, drawOrder, SCENE_GPU_DRAW_BUILDING); }
+    if (r->bfBuildingPipeline) { SDL_BindGPUGraphicsPipeline(rp, r->bfBuildingPipeline); draw_cmd_kind(r, rp, &tsb, &shadowTsb, drawOrder, SCENE_GPU_DRAW_BF_BUILDING); }
     /* Signs: always the simple bias-based pipeline here (no depth-copy split) --
      * an acceptable simplification for this secondary, lower-detail view. */
-    if (r->signPipeline)   { SDL_BindGPUGraphicsPipeline(rp, r->signPipeline);   draw_cmd_kind(r, rp, &tsb, NULL, drawOrder, SCENE_GPU_DRAW_SIGN); }
-    if (r->signBkPipeline) { SDL_BindGPUGraphicsPipeline(rp, r->signBkPipeline); draw_cmd_kind(r, rp, &tsb, NULL, drawOrder, SCENE_GPU_DRAW_SIGN_BK); }
+    if (r->signPipeline)   { SDL_BindGPUGraphicsPipeline(rp, r->signPipeline);   draw_cmd_kind(r, rp, &tsb, &shadowTsb, drawOrder, SCENE_GPU_DRAW_SIGN); }
+    if (r->signBkPipeline) { SDL_BindGPUGraphicsPipeline(rp, r->signBkPipeline); draw_cmd_kind(r, rp, &tsb, &shadowTsb, drawOrder, SCENE_GPU_DRAW_SIGN_BK); }
     /* No sun shading from here on: trees are camera-facing cut-outs, and the
      * darken, blend (clouds, glass) and shadow passes aren't surfaces. */
     pfu.sun[3] = 0.0f;
+    pfu.shadow[0] = 0.0f;
     SDL_PushGPUFragmentUniformData(r->cmdBuf, 0, &pfu, sizeof(pfu));
-    if (r->treePipeline)   { SDL_BindGPUGraphicsPipeline(rp, r->treePipeline);   draw_cmd_kind(r, rp, &tsb, NULL, drawOrder, SCENE_GPU_DRAW_TREE); }
+    if (r->treePipeline)   { SDL_BindGPUGraphicsPipeline(rp, r->treePipeline);   draw_cmd_kind(r, rp, &tsb, &shadowTsb, drawOrder, SCENE_GPU_DRAW_TREE); }
     /* Multiply-blend darken pass for TRANSPARENT non-textured track quads (glass/
      * divider walls) -- must run after opaque/wall/building/sign/tree so there's
      * real colour underneath to darken; see trackDarkenPipeline comment. */
     SDL_GPUGraphicsPipeline *trackDarkenPipeline = track_darken_pipeline_for_draw(r);
-    if (trackDarkenPipeline) { SDL_BindGPUGraphicsPipeline(rp, trackDarkenPipeline); draw_cmd_kind(r, rp, &tsb, NULL, drawOrder, SCENE_GPU_DRAW_TRACK_DARKEN); }
-    if (r->blendPipeline)  { SDL_BindGPUGraphicsPipeline(rp, r->blendPipeline);  draw_cmd_kind(r, rp, &tsb, NULL, drawOrder, SCENE_GPU_DRAW_BLEND); }
+    if (trackDarkenPipeline) { SDL_BindGPUGraphicsPipeline(rp, trackDarkenPipeline); draw_cmd_kind(r, rp, &tsb, &shadowTsb, drawOrder, SCENE_GPU_DRAW_TRACK_DARKEN); }
+    if (r->blendPipeline)  { SDL_BindGPUGraphicsPipeline(rp, r->blendPipeline);  draw_cmd_kind(r, rp, &tsb, &shadowTsb, drawOrder, SCENE_GPU_DRAW_BLEND); }
 
     if (r->carDrawCount > 0 && r->carPipeline) {
         SDL_BindGPUGraphicsPipeline(rp, r->carPipeline);
@@ -2999,12 +3240,15 @@ SDL_GPUTexture *scene_render_gpu_flush_secondary_view(SceneRendererGPU *r, int s
          * uniform slot -- re-push the shared view VP before resuming
          * SceneGPUDrawCmd (no per-object matrix) draws. */
         SDL_PushGPUVertexUniformData(r->cmdBuf, 0, viewVP, sizeof(viewVP));
-        SDL_GPUTextureSamplerBinding stsb = {.texture = NULL, .sampler = r->sampler};
+        SDL_GPUTextureSamplerBinding stsb[2] = {
+            {.texture = NULL, .sampler = r->sampler}, shadow_binding(r)
+        };
+        bool classicHidden = real_car_shadows_wanted(r);   /* real car shadows replace these */
         for (int i = 0; i < r->drawCmdCount; i++) {
             SceneGPUDrawCmd *cmd = &r->drawCmds[i];
-            if (cmd->kind != SCENE_GPU_DRAW_SHADOW) continue;
-            stsb.texture = cmd->texture;
-            SDL_BindGPUFragmentSamplers(rp, 0, &stsb, 1);
+            if (cmd->kind != SCENE_GPU_DRAW_SHADOW || classicHidden) continue;
+            stsb[0].texture = cmd->texture;
+            SDL_BindGPUFragmentSamplers(rp, 0, stsb, 2);
             r->gpuBindsThisFrame++;
             r->gpuDrawCallsThisFrame++;
             SDL_DrawGPUPrimitives(rp, (Uint32)cmd->vertexCount, 1, (Uint32)cmd->vertexStart, 0);
@@ -3642,6 +3886,10 @@ static bool scene_render_gpu_end_frame_internal(SceneRendererGPU *r,
      * render target and offscreenTex is the resolve target. */
     SDL_GPUTexture *resolveTarget = r->offscreenTex;
 
+    /* Car shadow map (depth from the sun's view) before the scene uses it. */
+    if (!bReadback)
+        render_car_shadow_map(r);
+
     /* ====================================================================
      * Pass 1: 3D scene + car meshes → offscreen (with optional MSAA resolve)
      * ==================================================================== */
@@ -3697,7 +3945,8 @@ static bool scene_render_gpu_end_frame_internal(SceneRendererGPU *r,
             SDL_GPUBufferBinding gvbb = {.buffer = r->skyVertBuf};
             SDL_BindGPUVertexBuffers(rp, 0, &gvbb, 1);
             SDL_GPUTextureSamplerBinding gtsb = {.texture = gTex, .sampler = r->samplerNearest};
-            SDL_BindGPUFragmentSamplers(rp, 0, &gtsb, 1);
+            SDL_GPUTextureSamplerBinding skyTsb[2] = { gtsb, shadow_binding(r) };
+            SDL_BindGPUFragmentSamplers(rp, 0, skyTsb, r->skyGradientShader ? 1 : 2);
             SDL_DrawGPUPrimitives(rp, skyVertCount, 1, 0, 0);
         }
     }
@@ -3718,6 +3967,8 @@ static bool scene_render_gpu_end_frame_internal(SceneRendererGPU *r,
         float carShine, carGlint, carDark, carSmooth, carBevel, carSun;  /* car*: game_car_pixel.hlsl only */
         float sun[4];     /* xyz towards the sun (world), w = sun shading strength */
         float camPos[4];  /* camera position (world), to face the shading normal */
+        float shadow[4];  /* x: car shadow darkness (0 = off), y: depth bias */
+        float lightVP[16];/* world -> the sun's view of the car shadow map */
     } pfu = {
         r->fogDensity,
         (r->gamma > 0.0f)       ? r->gamma       : 1.0f,
@@ -3727,12 +3978,16 @@ static bool scene_render_gpu_end_frame_internal(SceneRendererGPU *r,
         (r->contrast > 0.0f)    ? r->contrast     : 1.0f,
         r->brightness,
         0.0f, r->carGlint, r->carDark, r->carSmooth, r->carBevel, 0.0f,
-        {0.0f, 0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 0.0f, 0.0f}
+        {0.0f, 0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 0.0f, 0.0f},
+        {0.0f, 0.0f, 0.0f, 0.0f}, {0}
     };
     fill_sun_uniforms(r, pfu.sun, pfu.camPos);
+    fill_shadow_uniforms(r, pfu.shadow, pfu.lightVP);
     /* Editor and parity readbacks keep their exact output (as with AO). */
-    if (bReadback)
+    if (bReadback) {
         pfu.sun[3] = 0.0f;
+        pfu.shadow[0] = 0.0f;
+    }
     const float sunNow = pfu.sun[3];
     SDL_PushGPUFragmentUniformData(r->cmdBuf, 0, &pfu, sizeof(pfu));
 
@@ -3753,33 +4008,35 @@ static bool scene_render_gpu_end_frame_internal(SceneRendererGPU *r,
      * why cars in particular must never cross the sign depth-copy's pass
      * boundary. Signs come last of all, in their own pass, so the full depth
      * buffer (now including cars/trees/everything) is owned before they test. */
+    SDL_GPUTextureSamplerBinding shadowTsb = shadow_binding(r);   /* slot 1: car shadow map */
     if (r->opaquePipeline) {
         SDL_BindGPUGraphicsPipeline(rp, r->opaquePipeline);
-        draw_cmd_kind(r, rp, &tsb, NULL, drawOrder, SCENE_GPU_DRAW_OPAQUE);
+        draw_cmd_kind(r, rp, &tsb, &shadowTsb, drawOrder, SCENE_GPU_DRAW_OPAQUE);
     }
     if (r->wallPipeline) {
         SDL_BindGPUGraphicsPipeline(rp, r->wallPipeline);
-        draw_cmd_kind(r, rp, &tsb, NULL, drawOrder, SCENE_GPU_DRAW_WALL);
+        draw_cmd_kind(r, rp, &tsb, &shadowTsb, drawOrder, SCENE_GPU_DRAW_WALL);
     }
     if (r->bfWallPipeline) {
         SDL_BindGPUGraphicsPipeline(rp, r->bfWallPipeline);
-        draw_cmd_kind(r, rp, &tsb, NULL, drawOrder, SCENE_GPU_DRAW_BF_WALL);
+        draw_cmd_kind(r, rp, &tsb, &shadowTsb, drawOrder, SCENE_GPU_DRAW_BF_WALL);
     }
     if (r->buildingPipeline) {
         SDL_BindGPUGraphicsPipeline(rp, r->buildingPipeline);
-        draw_cmd_kind(r, rp, &tsb, NULL, drawOrder, SCENE_GPU_DRAW_BUILDING);
+        draw_cmd_kind(r, rp, &tsb, &shadowTsb, drawOrder, SCENE_GPU_DRAW_BUILDING);
     }
     if (r->bfBuildingPipeline) {
         SDL_BindGPUGraphicsPipeline(rp, r->bfBuildingPipeline);
-        draw_cmd_kind(r, rp, &tsb, NULL, drawOrder, SCENE_GPU_DRAW_BF_BUILDING);
+        draw_cmd_kind(r, rp, &tsb, &shadowTsb, drawOrder, SCENE_GPU_DRAW_BF_BUILDING);
     }
     /* No sun shading from here on: trees are camera-facing cut-outs, and the
      * darken, blend (clouds, glass) and shadow passes aren't surfaces. */
     pfu.sun[3] = 0.0f;
+    pfu.shadow[0] = 0.0f;
     SDL_PushGPUFragmentUniformData(r->cmdBuf, 0, &pfu, sizeof(pfu));
     if (r->treePipeline) {
         SDL_BindGPUGraphicsPipeline(rp, r->treePipeline);
-        draw_cmd_kind(r, rp, &tsb, NULL, drawOrder, SCENE_GPU_DRAW_TREE);
+        draw_cmd_kind(r, rp, &tsb, &shadowTsb, drawOrder, SCENE_GPU_DRAW_TREE);
     }
     /* Multiply-blend darken pass for TRANSPARENT non-textured track quads (glass/
      * divider walls) -- must run after opaque/wall/building/tree so there's
@@ -3787,11 +4044,11 @@ static bool scene_render_gpu_end_frame_internal(SceneRendererGPU *r,
     SDL_GPUGraphicsPipeline *trackDarkenPipeline = track_darken_pipeline_for_draw(r);
     if (trackDarkenPipeline) {
         SDL_BindGPUGraphicsPipeline(rp, trackDarkenPipeline);
-        draw_cmd_kind(r, rp, &tsb, NULL, drawOrder, SCENE_GPU_DRAW_TRACK_DARKEN);
+        draw_cmd_kind(r, rp, &tsb, &shadowTsb, drawOrder, SCENE_GPU_DRAW_TRACK_DARKEN);
     }
     if (r->blendPipeline) {
         SDL_BindGPUGraphicsPipeline(rp, r->blendPipeline);
-        draw_cmd_kind(r, rp, &tsb, NULL, drawOrder, SCENE_GPU_DRAW_BLEND);
+        draw_cmd_kind(r, rp, &tsb, &shadowTsb, drawOrder, SCENE_GPU_DRAW_BLEND);
     }
 
     if (r->carDrawCount > 0 && r->carPipeline) {
@@ -3845,12 +4102,15 @@ static bool scene_render_gpu_end_frame_internal(SceneRendererGPU *r,
          * uniform slot -- re-push the shared view VP before resuming
          * SceneGPUDrawCmd (no per-object matrix) draws. */
         SDL_PushGPUVertexUniformData(r->cmdBuf, 0, viewVP, sizeof(viewVP));
-        SDL_GPUTextureSamplerBinding stsb = {.texture = NULL, .sampler = r->sampler};
+        SDL_GPUTextureSamplerBinding stsb[2] = {
+            {.texture = NULL, .sampler = r->sampler}, shadow_binding(r)
+        };
+        bool classicHidden = real_car_shadows_wanted(r);   /* real car shadows replace these */
         for (int i = 0; i < r->drawCmdCount; i++) {
             SceneGPUDrawCmd *cmd = &r->drawCmds[i];
-            if (cmd->kind != SCENE_GPU_DRAW_SHADOW) continue;
-            stsb.texture = cmd->texture;
-            SDL_BindGPUFragmentSamplers(rp, 0, &stsb, 1);
+            if (cmd->kind != SCENE_GPU_DRAW_SHADOW || classicHidden) continue;
+            stsb[0].texture = cmd->texture;
+            SDL_BindGPUFragmentSamplers(rp, 0, stsb, 2);
             r->gpuBindsThisFrame++;
             r->gpuDrawCallsThisFrame++;
             SDL_DrawGPUPrimitives(rp, (Uint32)cmd->vertexCount, 1, (Uint32)cmd->vertexStart, 0);
@@ -3970,11 +4230,11 @@ static bool scene_render_gpu_end_frame_internal(SceneRendererGPU *r,
     } else {
         if (r->signPipeline) {
             SDL_BindGPUGraphicsPipeline(rp, r->signPipeline);
-            draw_cmd_kind(r, rp, &tsb, NULL, drawOrder, SCENE_GPU_DRAW_SIGN);
+            draw_cmd_kind(r, rp, &tsb, &shadowTsb, drawOrder, SCENE_GPU_DRAW_SIGN);
         }
         if (r->signBkPipeline) {
             SDL_BindGPUGraphicsPipeline(rp, r->signBkPipeline);
-            draw_cmd_kind(r, rp, &tsb, NULL, drawOrder, SCENE_GPU_DRAW_SIGN_BK);
+            draw_cmd_kind(r, rp, &tsb, &shadowTsb, drawOrder, SCENE_GPU_DRAW_SIGN_BK);
         }
     }
 
@@ -4537,6 +4797,18 @@ void scene_render_gpu_set_sun_shade(SceneRendererGPU *r, float strength)
     r->sunShade = (strength < 0.0f) ? 0.0f : (strength > 1.0f) ? 1.0f : strength;
 }
 
+void scene_render_gpu_set_car_shadows(SceneRendererGPU *r, float darkness)
+{
+    if (!r) return;
+    r->carShadowStrength = (darkness < 0.0f) ? 0.0f : (darkness > 1.0f) ? 1.0f : darkness;
+}
+
+void scene_render_gpu_set_car_shadows_allowed(SceneRendererGPU *r, bool allowed)
+{
+    if (!r) return;
+    r->carShadowsAllowed = allowed;
+}
+
 void scene_render_gpu_set_hud_map_scale(SceneRendererGPU *r, float scale)
 {
     if (!r) return;
@@ -4574,13 +4846,13 @@ static void rebuild_scene_pipelines(SceneRendererGPU *r, SDL_GPUSampleCount sc, 
         game_scene_vertex_msl,   game_scene_vertex_msl_size, 0, 1);
     SDL_GPUShader *sfOp = load_shader(r->device, SDL_GPU_SHADERSTAGE_FRAGMENT,
         game_scene_pixel_spirv,  game_scene_pixel_spirv_size,
-        game_scene_pixel_msl,    game_scene_pixel_msl_size,  1, 1);
+        game_scene_pixel_msl,    game_scene_pixel_msl_size,  2, 1);
     SDL_GPUShader *sfBl = load_shader(r->device, SDL_GPU_SHADERSTAGE_FRAGMENT,
         game_scene_pixel_blend_spirv, game_scene_pixel_blend_spirv_size,
-        game_scene_pixel_blend_msl,   game_scene_pixel_blend_msl_size,  1, 1);
+        game_scene_pixel_blend_msl,   game_scene_pixel_blend_msl_size,  2, 1);
     SDL_GPUShader *sfTrack = load_shader(r->device, SDL_GPU_SHADERSTAGE_FRAGMENT,
         game_scene_track_darken_pixel_spirv, game_scene_track_darken_pixel_spirv_size,
-        game_scene_track_darken_pixel_msl,   game_scene_track_darken_pixel_msl_size,  1, 1);
+        game_scene_track_darken_pixel_msl,   game_scene_track_darken_pixel_msl_size,  2, 1);
     SDL_GPUShader *sfSign = load_shader(r->device, SDL_GPU_SHADERSTAGE_FRAGMENT,
         game_scene_sign_pixel_spirv,  game_scene_sign_pixel_spirv_size,
         game_scene_sign_pixel_msl,    game_scene_sign_pixel_msl_size,    2, 1);
@@ -4751,13 +5023,13 @@ void scene_render_gpu_set_msaa(SceneRendererGPU *r, int level)
         game_scene_vertex_msl,   game_scene_vertex_msl_size, 0, 1);
     SDL_GPUShader *sfOp = load_shader(r->device, SDL_GPU_SHADERSTAGE_FRAGMENT,
         game_scene_pixel_spirv,  game_scene_pixel_spirv_size,
-        game_scene_pixel_msl,    game_scene_pixel_msl_size,  1, 1);
+        game_scene_pixel_msl,    game_scene_pixel_msl_size,  2, 1);
     SDL_GPUShader *sfBl = load_shader(r->device, SDL_GPU_SHADERSTAGE_FRAGMENT,
         game_scene_pixel_blend_spirv, game_scene_pixel_blend_spirv_size,
-        game_scene_pixel_blend_msl,   game_scene_pixel_blend_msl_size,  1, 1);
+        game_scene_pixel_blend_msl,   game_scene_pixel_blend_msl_size,  2, 1);
     SDL_GPUShader *sfTrack = load_shader(r->device, SDL_GPU_SHADERSTAGE_FRAGMENT,
         game_scene_track_darken_pixel_spirv, game_scene_track_darken_pixel_spirv_size,
-        game_scene_track_darken_pixel_msl,   game_scene_track_darken_pixel_msl_size,  1, 1);
+        game_scene_track_darken_pixel_msl,   game_scene_track_darken_pixel_msl_size,  2, 1);
     SDL_GPUShader *sfSign = load_shader(r->device, SDL_GPU_SHADERSTAGE_FRAGMENT,
         game_scene_sign_pixel_spirv,  game_scene_sign_pixel_spirv_size,
         game_scene_sign_pixel_msl,    game_scene_sign_pixel_msl_size,    2, 1);
@@ -7124,7 +7396,8 @@ void scene_render_gpu_queue_car_draw(SceneRendererGPU *r,
                                       int firstIndex,
                                       int idxCount,
                                       const float mvp[16],
-                                      const float shine[12])
+                                      const float shine[12],
+                                      const float world[16])
 {
     if (!r || r->carDrawCount >= SCENE_GPU_MAX_CAR_DRAWS) return;
     SceneGPUCarDrawCmd *cmd = &r->carDraws[r->carDrawCount++];
@@ -7136,6 +7409,8 @@ void scene_render_gpu_queue_car_draw(SceneRendererGPU *r,
     memcpy(cmd->mvp, mvp, 16 * sizeof(float));
     if (shine) memcpy(cmd->shine, shine, sizeof(cmd->shine));
     else       memset(cmd->shine, 0, sizeof(cmd->shine));
+    cmd->hasWorld = world != NULL;
+    if (world) memcpy(cmd->world, world, sizeof(cmd->world));
 }
 
 void scene_render_gpu_queue_car_shadow_draw(SceneRendererGPU *r,
@@ -7147,6 +7422,7 @@ void scene_render_gpu_queue_car_shadow_draw(SceneRendererGPU *r,
                                             const float mvp[16])
 {
     if (!r || r->carShadowDrawCount >= SCENE_GPU_MAX_CAR_DRAWS) return;
+    if (real_car_shadows_wanted(r)) return;   /* real car shadows replace these */
     SceneGPUCarDrawCmd *cmd = &r->carShadowDraws[r->carShadowDrawCount++];
     cmd->vertBuf    = vertBuf;
     cmd->idxBuf     = idxBuf;

@@ -1261,6 +1261,10 @@ void game_render_set_sun_shade(GameRenderer *renderer, float strength) {
     if (renderer) scene_render_gpu_set_sun_shade(renderer->gpu, strength);
 }
 
+void game_render_set_car_shadows(GameRenderer *renderer, float darkness) {
+    if (renderer) scene_render_gpu_set_car_shadows(renderer->gpu, darkness);
+}
+
 void game_render_hud_message_begin(GameRenderer *renderer) {
     /* Same buffer and size game_render_end_frame hands the GPU HUD; in-race
      * menus (game_req) draw the HUD unscaled anyway. */
@@ -1373,6 +1377,9 @@ void game_render_set_sky_gradient(GameRenderer *renderer, float amount) {
 }
 void game_render_set_sun_shade(GameRenderer *renderer, float strength) {
     (void)renderer; (void)strength;
+}
+void game_render_set_car_shadows(GameRenderer *renderer, float darkness) {
+    (void)renderer; (void)darkness;
 }
 void game_render_hud_message_begin(GameRenderer *renderer) {
     (void)renderer;

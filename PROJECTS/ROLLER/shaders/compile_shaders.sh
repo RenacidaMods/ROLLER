@@ -112,6 +112,9 @@ echo "Compiling game car pixel shader..."
 "$SHADERCROSS" "$SCRIPT_DIR/game_car_pixel.hlsl" -s HLSL -d SPIRV -t fragment -e main -o "$OUT_DIR/game_car_pixel.spv"
 "$SHADERCROSS" "$SCRIPT_DIR/game_car_pixel.hlsl" -s HLSL -d MSL   -t fragment -e main -o "$OUT_DIR/game_car_pixel.msl"
 "$SHADERCROSS" "$SCRIPT_DIR/game_car_pixel.hlsl" -s HLSL -d DXIL  -t fragment -e main -o "$OUT_DIR/game_car_pixel.dxil"
+"$SHADERCROSS" "$SCRIPT_DIR/game_car_shadow_caster_pixel.hlsl" -s HLSL -d SPIRV -t fragment -e main -o "$OUT_DIR/game_car_shadow_caster_pixel.spv"
+"$SHADERCROSS" "$SCRIPT_DIR/game_car_shadow_caster_pixel.hlsl" -s HLSL -d MSL   -t fragment -e main -o "$OUT_DIR/game_car_shadow_caster_pixel.msl"
+"$SHADERCROSS" "$SCRIPT_DIR/game_car_shadow_caster_pixel.hlsl" -s HLSL -d DXIL  -t fragment -e main -o "$OUT_DIR/game_car_shadow_caster_pixel.dxil"
 
 # --- HUD shaders ---
 echo "Compiling HUD overlay vertex shader..."
@@ -193,7 +196,7 @@ echo "Generating game_scene_shaders.h..."
 $EMBED_FN
 out_dir = r'$W_OUT'
 h = '#ifndef GAME_SCENE_SHADERS_H\n#define GAME_SCENE_SHADERS_H\n\n'
-for name in ['game_scene_vertex', 'game_scene_pixel', 'game_scene_pixel_blend', 'game_scene_track_darken_pixel', 'game_scene_sign_pixel', 'game_scene_sky_vertex', 'game_scene_sky_pixel', 'game_car_vertex', 'game_car_pixel']:
+for name in ['game_scene_vertex', 'game_scene_pixel', 'game_scene_pixel_blend', 'game_scene_track_darken_pixel', 'game_scene_sign_pixel', 'game_scene_sky_vertex', 'game_scene_sky_pixel', 'game_car_vertex', 'game_car_pixel', 'game_car_shadow_caster_pixel']:
     for fmt, ext in [('spirv', 'spv'), ('msl', 'msl')]:
         p = os.path.join(out_dir, f'{name}.{ext}')
         if os.path.exists(p):

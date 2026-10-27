@@ -58,6 +58,8 @@ void game_render_set_car_shine(GameRenderer *renderer, float strength, float gli
 void game_render_set_sky_gradient(GameRenderer *renderer, float amount);
 /* Sun shading (GPU only): 0 = off, up to 1; 0.6 default. */
 void game_render_set_sun_shade(GameRenderer *renderer, float strength);
+/* Real car shadows (GPU only): darkness 0-1, 0 = the classic flat shadows. */
+void game_render_set_car_shadows(GameRenderer *renderer, float darkness);
 /* FOV multiplier on top of game camera: 1.0=native, <1=zoom in, >1=zoom out */
 void game_render_set_fov_multiplier(GameRenderer *renderer, float mult);
 /* Compatibility: emulate SW rasterizer's extra-dark one-pixel track-darken quad border */
