@@ -30,6 +30,7 @@ struct VertexOutput
     float3 smoothN  : TEXCOORD7;
     float2 edge     : TEXCOORD8;
     float3 bevelN   : TEXCOORD9;
+    float3 sunObj   : TEXCOORD10;  /* towards the sun, car coordinates (zero: work it out) */
 };
 
 VertexOutput main(VertexInput input)
@@ -46,5 +47,6 @@ VertexOutput main(VertexInput input)
     output.smoothN  = input.normal;
     output.edge     = input.edge;
     output.bevelN   = input.bevel;
+    output.sunObj   = float3(camPosObj.w, upObj.w, xAxisObj.w);
     return output;
 }

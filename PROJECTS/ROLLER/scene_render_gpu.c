@@ -1010,14 +1010,19 @@ static void push_sky_uniforms(SceneRendererGPU *r, SDL_FColor skyFColor, bool fl
 }
 
 /* Sun shading uniforms for the scene pixel shaders: the direction towards
- * the sun in world space (the same sun as the car shine's glint, up = +Z)
+ * the sun in world space (scene_render_gpu_sun_direction)
  * with the strength in w, and the camera's world position, recovered from
  * the inverse view-projection (inverse(vp) * (0,0,1,0) is the eye). */
-static void fill_sun_uniforms(const SceneRendererGPU *r, float sun[4], float camPos[4])
+void scene_render_gpu_sun_direction(float out[3])
 {
     const float sx = 0.60f, sy = 0.45f, sz = 0.66f;
     float len = sqrtf(sx * sx + sy * sy + sz * sz);
-    sun[0] = sx / len;  sun[1] = sy / len;  sun[2] = sz / len;
+    out[0] = sx / len;  out[1] = sy / len;  out[2] = sz / len;
+}
+
+static void fill_sun_uniforms(const SceneRendererGPU *r, float sun[4], float camPos[4])
+{
+    scene_render_gpu_sun_direction(sun);
     sun[3] = r->sunShade;
     camPos[0] = camPos[1] = camPos[2] = 0.0f;
     camPos[3] = 1.0f;

@@ -170,6 +170,9 @@ void scene_render_gpu_set_sky_gradient(SceneRendererGPU *r, float amount);
 /* Sun shading on track, walls, buildings, signs and cars: surfaces turned
  * away from the sun darken, by up to 45% at 1.0 (0 = off, 0.6 default). */
 void scene_render_gpu_set_sun_shade(SceneRendererGPU *r, float strength);
+/* The one sun (unit vector towards it, world space, up = +Z) used by sun
+ * shading, real car shadows and the car shine's glint. */
+void scene_render_gpu_sun_direction(float out[3]);
 /* Real car shadows (shadow-mapped from the same sun): darkness 0-1, 0 =
  * the classic flat shadows. `allowed` follows the game's shadows option. */
 void scene_render_gpu_set_car_shadows(SceneRendererGPU *r, float darkness);

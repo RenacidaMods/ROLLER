@@ -31,7 +31,18 @@ struct PixelInput
     float3 smoothN  : TEXCOORD7;
     float2 edge     : TEXCOORD8;
     float3 bevelN   : TEXCOORD9;
+    float3 sunObj   : TEXCOORD10;
 };
+
+/* The sun in the car's coordinates: passed in for race cars (the same sun
+ * as the world shading and shadows); menu cars pass none and get the old
+ * fixed direction built from up and the X axis. */
+float3 carSunDir(PixelInput input, float3 up, float3 ex, float3 ey)
+{
+    if (dot(input.sunObj, input.sunObj) > 0.25)
+        return normalize(input.sunObj);
+    return normalize(ex * 0.60 + ey * 0.45 + up * 0.66);
+}
 
 /* The surroundings the paint reflects, by direction (unit, world-aligned
  * frame): sky fading from a pale horizon to blue overhead, a dark skyline of
@@ -121,7 +132,7 @@ float4 main(PixelInput input) : SV_Target
         float fresnel = 0.25 + 0.75 * pow(1.0 - saturate(ndv), 4.0);
         k = saturate(carShine * 0.6 * fresnel) * lowFade;
 
-        float3 sunDir = normalize(ex * 0.60 + ey * 0.45 + up * 0.66);
+        float3 sunDir = carSunDir(input, up, ex, ey);
         float  sd     = saturate(dot(R, sunDir));
         glint = (pow(sd, 400.0) * 3.0 + pow(sd, 24.0) * 0.25) * saturate(carShine) * carGlint * lowFade;
     }
@@ -145,7 +156,7 @@ float4 main(PixelInput input) : SV_Target
         float3 upS = normalize(input.up);
         float3 exS = normalize(input.xAxis - upS * dot(input.xAxis, upS));
         float3 eyS = cross(upS, exS);
-        float3 sunS = normalize(exS * 0.60 + eyS * 0.45 + upS * 0.66);
+        float3 sunS = carSunDir(input, upS, exS, eyS);
         float  wrap = saturate(dot(Ns, sunS) * 0.5 + 0.5);
         sunK = 1.0 - carSun * 0.45 * (1.0 - wrap);
     }

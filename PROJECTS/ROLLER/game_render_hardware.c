@@ -751,11 +751,20 @@ static void car_shine_inputs(float shine[12], const float vp[16], const float wo
     float cw = ivp[11];   /* column 2 of inverse(vp) is inverse(vp) * (0,0,1,0) */
     if (fabsf(cw) < 1e-20f) return;
     float cam[3] = { ivp[8] / cw, ivp[9] / cw, ivp[10] / cw };
+    float sun[3];
+    scene_render_gpu_sun_direction(sun);
     for (int r = 0; r < 3; r++) {
         shine[r]     = iw[r] * cam[0] + iw[4 + r] * cam[1] + iw[8 + r] * cam[2] + iw[12 + r];
         shine[4 + r] = iw[8 + r];   /* inverse(world) * (0, 0, 1, 0) */
         shine[8 + r] = iw[r];       /* inverse(world) * (1, 0, 0, 0) */
     }
+    /* The sun in the car's own coordinates, carried in the three w slots:
+     * rebuilding it in the shader from up and the X axis with a cross
+     * product mirrored it when the car's frame is mirrored, so the glint
+     * disagreed with the shadows and shading. */
+    shine[3]  = iw[0] * sun[0] + iw[4] * sun[1] + iw[8]  * sun[2];
+    shine[7]  = iw[1] * sun[0] + iw[5] * sun[1] + iw[9]  * sun[2];
+    shine[11] = iw[2] * sun[0] + iw[6] * sun[1] + iw[10] * sun[2];
 }
 
 /* 4×4 column-major matrix multiply: out = A * B */
