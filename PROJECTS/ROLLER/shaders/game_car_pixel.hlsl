@@ -76,6 +76,13 @@ float4 main(PixelInput input) : SV_Target
         float3 V   = normalize(input.toCam);
         float3 N   = faceN / nLen;
         if (dot(N, V) < 0.0) N = -N;
+        /* Underside: panels that really face the ground (sills, the
+         * underside) sit in the car's own shade, so the shine fades out as
+         * the flat panel tips downward: full down to about 9 degrees, gone
+         * by about 30. Uses the panel's own facing, not the smoothed one
+         * below, so upright doors keep all their shine. */
+        float3 up      = normalize(input.up);
+        float  lowFade = smoothstep(-0.5, -0.15, dot(N, up));
         /* Smoothing: blend towards the corner normals averaged over
          * neighbouring panels (game_render_hw_car_corner_normals), so
          * reflections flow round edges instead of jumping at them. */
@@ -103,11 +110,6 @@ float4 main(PixelInput input) : SV_Target
         float  ndv = saturate(dot(N, V));
         float3 R   = reflect(-V, N);
 
-        float3 up  = normalize(input.up);
-        /* Underside: panels turning to face the ground (sills, the strip
-         * under the doors) sit in the car's own shade, so the shine fades
-         * out as the normal tips downward. Upright doors keep all of it. */
-        float  lowFade = smoothstep(-0.45, -0.05, dot(N, up));
         float3 ex  = normalize(input.xAxis - up * dot(input.xAxis, up));
         float3 ey  = cross(up, ex);
         float  el  = dot(R, up);
