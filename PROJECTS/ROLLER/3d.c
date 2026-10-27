@@ -5309,6 +5309,7 @@ HANDLE_SPECIAL_MODES:
   {
     if (draw_type != 2) {
       game_render_draw_pause_darken(g_pGameRenderer); // GPU-only: SW darkens via blankwindow() inside display_paused()
+      bool bPauseLayer = game_render_hud_menu_begin(g_pGameRenderer); // ROLLER: menu unscaled, HUD keeps its scale
       display_paused();
       if (trying_to_exit) {
         int iPromptY = (scr_size * 96) >> 6;
@@ -5325,6 +5326,8 @@ HANDLE_SPECIAL_MODES:
         frontend_mouse_draw_hover_box(FRONTEND_PAUSE_MOUSE_QUIT_PROMPT_ID,
                                       0, 0);
       }
+      if (bPauseLayer)
+        game_render_hud_menu_end(g_pGameRenderer);
     }
   }
   if (!winner_mode && replaytype != 2)        // Network status and waiting messages

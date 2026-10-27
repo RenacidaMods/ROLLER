@@ -9,6 +9,7 @@
 #include "sound.h"
 #include "car.h"
 #include "roller.h"    /* g_fMirrorFov */
+#include "moving.h"    /* replaytype */
 
 #include <stdlib.h>
 #include <string.h>
@@ -261,9 +262,10 @@ void game_render_end_frame(GameRenderer *renderer) {
         if (fade_palette_active())
             fade_palette_update();
         game_render_hw_draw_fps_overlay();
-        /* In-race menus (pause, options, replay panel) are drawn on the HUD;
-         * HUD scale would split them into pieces. */
-        scene_render_gpu_set_hud_menu_open(renderer->gpu, game_req != 0);
+        /* The replay panel is drawn on the HUD; HUD scale would split it
+         * into pieces. (The pause menus have their own unscaled layer, see
+         * game_render_hud_menu_begin.) */
+        scene_render_gpu_set_hud_menu_open(renderer->gpu, game_req != 0 && replaytype == 2);
         scene_render_gpu_set_hud_buffer(renderer->gpu,
                                         scrbuf,
                                         iHudW,
@@ -1266,22 +1268,42 @@ void game_render_set_car_shadows(GameRenderer *renderer, float darkness) {
 }
 
 void game_render_hud_message_begin(GameRenderer *renderer) {
-    /* Same buffer and size game_render_end_frame hands the GPU HUD; in-race
-     * menus (game_req) draw the HUD unscaled anyway. */
-    if (!renderer || renderer->mode != GAME_RENDER_GPU || !renderer->gpu || game_req) return;
+    /* Same buffer and size game_render_end_frame hands the GPU HUD; the
+     * replay panel draws the HUD unscaled anyway. */
+    if (!renderer || renderer->mode != GAME_RENDER_GPU || !renderer->gpu || (game_req && replaytype == 2)) return;
     int iHudW = renderer->hudW > 0 ? renderer->hudW : (XMAX > 0 ? XMAX : 640);
     int iHudH = renderer->hudH > 0 ? renderer->hudH : (YMAX > 0 ? YMAX : 400);
     scene_render_gpu_hud_message_begin(renderer->gpu, scrbuf, iHudW, iHudH);
 }
 
 void game_render_hud_map_begin(GameRenderer *renderer) {
-    if (!renderer || renderer->mode != GAME_RENDER_GPU || !renderer->gpu || game_req) return;
+    if (!renderer || renderer->mode != GAME_RENDER_GPU || !renderer->gpu || (game_req && replaytype == 2)) return;
     int iHudW = renderer->hudW > 0 ? renderer->hudW : (XMAX > 0 ? XMAX : 640);
     int iHudH = renderer->hudH > 0 ? renderer->hudH : (YMAX > 0 ? YMAX : 400);
     scene_render_gpu_hud_map_begin(renderer->gpu, scrbuf, iHudW, iHudH);
 }
 
 void game_render_hud_layer_end(GameRenderer *renderer) {
+    if (renderer && renderer->gpu) scene_render_gpu_hud_layer_end(renderer->gpu);
+}
+
+/* The pause menus on their own unscaled layer, so the race HUD keeps its
+ * HUD scale underneath instead of jumping back to full size. The menus'
+ * dimming (blankwindow) rewrites the HUD pixels, which would leak into the
+ * layer, so it's applied once here first and blankwindow then skips until
+ * game_render_hud_menu_end. Returns true if the layer was started. */
+bool game_render_hud_menu_begin(GameRenderer *renderer) {
+    if (!renderer || renderer->mode != GAME_RENDER_GPU || !renderer->gpu || replaytype == 2) return false;
+    blankwindow(0, 0, 320, 200);
+    g_bPauseBlankDone = 1;
+    int iHudW = renderer->hudW > 0 ? renderer->hudW : (XMAX > 0 ? XMAX : 640);
+    int iHudH = renderer->hudH > 0 ? renderer->hudH : (YMAX > 0 ? YMAX : 400);
+    scene_render_gpu_hud_message_begin(renderer->gpu, scrbuf, iHudW, iHudH);
+    return true;
+}
+
+void game_render_hud_menu_end(GameRenderer *renderer) {
+    g_bPauseBlankDone = 0;
     if (renderer && renderer->gpu) scene_render_gpu_hud_layer_end(renderer->gpu);
 }
 
@@ -1388,6 +1410,13 @@ void game_render_hud_map_begin(GameRenderer *renderer) {
     (void)renderer;
 }
 void game_render_hud_layer_end(GameRenderer *renderer) {
+    (void)renderer;
+}
+bool game_render_hud_menu_begin(GameRenderer *renderer) {
+    (void)renderer;
+    return false;
+}
+void game_render_hud_menu_end(GameRenderer *renderer) {
     (void)renderer;
 }
 void game_render_set_fov_multiplier(GameRenderer *renderer, float mult) {

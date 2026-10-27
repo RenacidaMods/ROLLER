@@ -4555,9 +4555,14 @@ void displaycalibrationbar(int iX, int iY, int iValue)
 
 //-------------------------------------------------------------------------------------------------
 //0001C830
+int g_bPauseBlankDone = 0;   // ROLLER: the pause dimming already applied this frame (GPU menu layer)
+
 void blankwindow(int iX1, int iY1, int iX2, int iY2)
 {
   tPolyParams poly; // [esp+0h] [ebp-34h] BYREF
+
+  if (g_bPauseBlankDone)
+    return;
 
   if (SVGA_ON) {
     iX2 *= 2;

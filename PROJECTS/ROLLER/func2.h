@@ -91,6 +91,7 @@ void getconfigvalue(const char *szConfigText, const char *szVarName, int *piOutV
 void getconfigvalueuc(const char *szConfigText, const char *szVarName, uint8 *pbyOutVal, int iMin, int iMax);
 void displaycalibrationbar(int iX, int iY, int iValue);
 void blankwindow(int iX1, int iY1, int iX2, int iY2);
+extern int g_bPauseBlankDone;   // ROLLER: see game_render_hud_menu_begin
 void volumebar(int iX, int iVolume);
 void LoadRecords();
 void SaveRecords();

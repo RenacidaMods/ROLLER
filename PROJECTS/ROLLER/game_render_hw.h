@@ -49,6 +49,9 @@ void game_render_set_hud_scale(GameRenderer *renderer, float scale);
 void game_render_hud_message_begin(GameRenderer *renderer);
 void game_render_hud_map_begin(GameRenderer *renderer);
 void game_render_hud_layer_end(GameRenderer *renderer);
+/* The in-race pause menus on their own unscaled layer (see game_render.c). */
+bool game_render_hud_menu_begin(GameRenderer *renderer);
+void game_render_hud_menu_end(GameRenderer *renderer);
 void game_render_set_hud_map_scale(GameRenderer *renderer, float scale);
 /* Car shine (GPU race cars only): strength 0 = off, up to 2; sun glint 0-4;
  * reflected ground/skyline darkness 0-1. */
