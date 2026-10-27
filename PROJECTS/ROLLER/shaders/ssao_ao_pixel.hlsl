@@ -51,9 +51,25 @@ float rotationNoise(float2 pixel)
 
 float viewZ(float d) { return zB / (d - zF); }
 
-float loadDepth(float2 uv)
+// Depth work is done on whole depth texels, with positions taken at texel
+// centres. This pass runs at half size, so each pixel's uv lands exactly on
+// the border between two depth texels; rounding uv picked the left or right
+// one differently from column to column (and row to row), so a neighbour
+// could come back as the same texel. That made a receding wall or roof look
+// flat-on to the camera in those columns and rows, and they darkened: crisp
+// stripes fixed to the screen that changed with the window size.
+int2 clampTexel(int2 px)
 {
-    int2 px = int2(clamp(uv * depthSize, float2(0.0, 0.0), depthSize - 1.0));
+    return clamp(px, int2(0, 0), int2(depthSize) - 1);
+}
+
+int2 uvTexel(float2 uv)
+{
+    return clampTexel(int2(floor(uv * depthSize)));
+}
+
+float loadDepthTexel(int2 px)
+{
     return depthTex.Load(int3(px, 0));
 }
 
@@ -64,6 +80,12 @@ float3 viewPos(float2 uv, float d)
     return float3(ndc.x * z / fov.x, (ndc.y - shiftY) * z / fov.y, z);
 }
 
+// View-space position of a depth texel's centre (px must be in range).
+float3 texelPos(int2 px)
+{
+    return viewPos((float2(px) + 0.5) / depthSize, loadDepthTexel(px));
+}
+
 float2 projectUV(float3 p)
 {
     float2 ndc = float2(fov.x * p.x / p.z, fov.y * p.y / p.z + shiftY);
@@ -72,36 +94,43 @@ float2 projectUV(float3 p)
 
 // One tangent step along off (one texel), for the face normal. Takes the
 // side with the smaller depth step so silhouettes don't produce bogus
-// normals, then, where the surface carries on smoothly, measures over three
-// texels instead: far away the depth buffer only resolves z to a few units,
-// and on a wall receding sideways those steps showed as vertical AO stripes
-// that followed the camera. Over three texels they matter a third as much.
-float3 tangentStep(float2 uv, float2 off, float3 P)
+// normals (or the side that's on screen, at the edges), then, where the
+// surface carries on smoothly, measures over three texels instead: far away
+// the depth buffer only resolves z to a few units, so a longer baseline
+// keeps the normal steady.
+float3 tangentStep(int2 px, int2 off, float3 P)
 {
-    float3 a1 = viewPos(uv + off, loadDepth(uv + off));
-    float3 b1 = viewPos(uv - off, loadDepth(uv - off));
-    bool useA = abs(a1.z - P.z) < abs(P.z - b1.z);
+    int2 maxPx = int2(depthSize) - 1;
+    bool hasA = all(px + off <= maxPx) && all(px + off >= 0);
+    bool hasB = all(px - off <= maxPx) && all(px - off >= 0);
+    float3 a1 = texelPos(clampTexel(px + off));
+    float3 b1 = texelPos(clampTexel(px - off));
+    bool useA = hasA && (!hasB || abs(a1.z - P.z) < abs(P.z - b1.z));
     float3 one = useA ? (a1 - P) : (P - b1);
-    float2 off3 = useA ? off * 3.0 : -off * 3.0;
-    float3 p3 = viewPos(uv + off3, loadDepth(uv + off3));
-    float3 three = useA ? (p3 - P) : (P - p3);
-    bool sameSurface = abs(three.z - 3.0 * one.z) < max(abs(one.z) * 1.5, P.z * 0.002);
-    return sameSurface ? three / 3.0 : one;
+    int2 px3 = clampTexel(useA ? px + off * 3 : px - off * 3);
+    int steps = abs(px3.x - px.x) + abs(px3.y - px.y);
+    if (steps < 2)
+        return one;
+    float3 p3 = texelPos(px3);
+    float3 longStep = useA ? (p3 - P) : (P - p3);
+    float k = (float)steps;
+    bool sameSurface = abs(longStep.z - k * one.z) < max(abs(one.z) * 1.5, P.z * 0.002);
+    return sameSurface ? longStep / k : one;
 }
 
 float4 main(PixelInput input) : SV_Target
 {
-    float2 uv = input.uv;
-    float d = loadDepth(uv);
+    // This half-size pixel covers depth texels 2x..2x+1; use the first.
+    int2 px = clampTexel(int2(floor(input.position.xy)) * 2);
+    float d = loadDepthTexel(px);
     if (d >= 0.9999999)
         return float4(1.0, 1.0, 1.0, 1.0);   // sky
 
-    float3 P = viewPos(uv, d);
+    float3 P = texelPos(px);
 
     // Face normal from neighbouring depths (see tangentStep).
-    float2 texel = 1.0 / depthSize;
-    float3 dx = tangentStep(uv, float2(texel.x, 0.0), P);
-    float3 dy = tangentStep(uv, float2(0.0, texel.y), P);
+    float3 dx = tangentStep(px, int2(1, 0), P);
+    float3 dy = tangentStep(px, int2(0, 1), P);
     float3 N = normalize(cross(dx, dy));
     if (dot(N, -P) < 0.0)
         N = -N;
@@ -132,15 +161,16 @@ float4 main(PixelInput input) : SV_Target
         float2 suv = projectUV(s);
         if (any(suv < 0.0) || any(suv > 1.0))
             continue;
-        float sd = loadDepth(suv);
-        float sceneZ = viewZ(sd);
+        int2 spx = uvTexel(suv);
+        float3 scene = texelPos(spx);
+        float sceneZ = scene.z;
         float inRange = smoothstep(0.0, 1.0, r / max(abs(P.z - sceneZ), 1e-3));
         landed += 1.0;
         // Angle bias: only surfaces rising well above this point's own plane
         // occlude. Without it, the shallow folds where road sections meet on
         // a hill (a few degrees each) showed as dark lines across the road;
         // real corners (wall and road, under cars) rise much more steeply.
-        float3 v = viewPos(suv, sd) - P;
+        float3 v = scene - P;
         float height = dot(v, N);
         float elevation = height / max(length(v), 1e-3);
         float angleTerm = saturate((elevation - 0.3) / 0.4);
