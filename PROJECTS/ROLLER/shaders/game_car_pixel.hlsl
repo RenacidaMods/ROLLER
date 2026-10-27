@@ -157,8 +157,10 @@ float4 main(PixelInput input) : SV_Target
         float3 exS = normalize(input.xAxis - upS * dot(input.xAxis, upS));
         float3 eyS = cross(upS, exS);
         float3 sunS = carSunDir(input, upS, exS, eyS);
-        float  wrap = saturate(dot(Ns, sunS) * 0.5 + 0.5);
-        sunK = 1.0 - carSun * 0.45 * (1.0 - wrap);
+        float  k      = carSun * 0.75;
+        float  wrap   = saturate(dot(Ns, sunS) * 0.5 + 0.5);
+        float  wrapUp = saturate(dot(upS, sunS) * 0.5 + 0.5);   /* like the world: roof = flat ground */
+        sunK = (1.0 - k * (1.0 - wrap)) / (1.0 - k * (1.0 - wrapUp));
     }
 
     float4 texColor   = meshTexture.Sample(meshSampler, input.uv);

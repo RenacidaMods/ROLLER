@@ -40,8 +40,9 @@ struct PixelInput
 
 /* Sun shading: the flat face normal from how the world position changes
  * across the screen, turned towards the camera, lit half-Lambert from the
- * sun. Faces towards the sun keep their colour; faces turned away darken
- * by up to 45% at full strength, so the painted shading isn't washed out.
+ * sun and measured against flat ground: level surfaces keep their exact
+ * colour, faces turned away from the sun darken (by about half at full
+ * strength) and faces towards it brighten a little.
  * Runs before any discard (it uses screen-space derivatives). */
 float sunShade(float3 worldPos)
 {
@@ -54,8 +55,10 @@ float sunShade(float3 worldPos)
     N /= len;
     if (dot(N, camPos.xyz - worldPos) < 0.0)
         N = -N;
-    float wrap = saturate(dot(N, sunDir.xyz) * 0.5 + 0.5);
-    return 1.0 - sunDir.w * 0.45 * (1.0 - wrap);
+    float k      = sunDir.w * 0.75;
+    float wrap   = saturate(dot(N, sunDir.xyz) * 0.5 + 0.5);
+    float wrapUp = saturate(sunDir.z * 0.5 + 0.5);   /* flat ground (up = +Z) */
+    return (1.0 - k * (1.0 - wrap)) / (1.0 - k * (1.0 - wrapUp));
 }
 
 
