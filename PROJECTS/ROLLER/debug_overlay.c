@@ -1753,7 +1753,7 @@ static void DrawDebugPanel(DebugOverlay *pOverlay) {
         g_fFovMultiplier  = 1.0f;  g_fVigStrength    = 0.0f;
         g_bAmbientOcclusion = false; g_fAORadius = 400.0f; g_fAOStrength = 1.0f;
         g_fHUDScale       = 1.0f;  g_fHUDMapScale    = 1.0f;
-        g_fCarShine       = 1.5f;  g_fCarShineGlint  = 4.0f;  g_fCarShineDark = 0.85f;
+        g_fCarShine       = 1.0f;  g_fCarShineGlint  = 4.0f;  g_fCarShineDark = 0.55f;
         g_fCarShineSmooth = 1.0f;  g_fCarShineBevel = 0.25f;
         g_fMirrorFov      = 0.75f;
         g_fBrightness     = 0.0f;  g_fContrast       = 1.0f;

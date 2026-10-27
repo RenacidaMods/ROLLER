@@ -1840,7 +1840,7 @@ SceneRendererGPU *scene_render_gpu_create(SDL_GPUDevice *device, SDL_Window *win
     r->fogColor[3]     = 1.0f;
     r->saturation      = 1.0f;
     r->carGlint        = 4.0f;
-    r->carDark         = 0.85f;
+    r->carDark         = 0.55f;
     r->carSmooth       = 1.0f;
     r->carBevel        = 0.25f;
     r->contrast        = 1.0f;

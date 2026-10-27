@@ -3428,13 +3428,13 @@ static int InputParseDebugSetting(const char *szName, const char *szValue)
 
   if (InputStringEqualsNoCase(szName, "CarShineDarkness")) {
     g_fCarShineDark = (float)atof(szValue);
-    if (g_fCarShineDark < 0.0f || g_fCarShineDark > 1.0f) g_fCarShineDark = 0.85f;
+    if (g_fCarShineDark < 0.0f || g_fCarShineDark > 1.0f) g_fCarShineDark = 0.55f;
     return 1;
   }
 
   if (InputStringEqualsNoCase(szName, "CarShine")) {
     g_fCarShine = (float)atof(szValue);
-    if (g_fCarShine < 0.0f || g_fCarShine > 3.0f) g_fCarShine = 1.5f;
+    if (g_fCarShine < 0.0f || g_fCarShine > 3.0f) g_fCarShine = 1.0f;
     return 1;
   }
 
