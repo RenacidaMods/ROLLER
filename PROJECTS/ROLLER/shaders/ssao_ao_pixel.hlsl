@@ -121,7 +121,10 @@ float3 tangentStep(int2 px, int2 off, float3 P)
 float4 main(PixelInput input) : SV_Target
 {
     // This half-size pixel covers depth texels 2x..2x+1; use the first.
-    int2 px = clampTexel(int2(floor(input.position.xy)) * 2);
+    // uv * depthSize / 2 sits half a pixel from any border, so it rounds
+    // the same way everywhere. (Reading uv also keeps this shader's inputs
+    // matching the vertex shader's outputs, which Direct3D 12 requires.)
+    int2 px = clampTexel(int2(floor(input.uv * depthSize * 0.5)) * 2);
     float d = loadDepthTexel(px);
     if (d >= 0.9999999)
         return float4(1.0, 1.0, 1.0, 1.0);   // sky
