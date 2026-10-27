@@ -10,7 +10,14 @@ cbuffer ScenePixelUniforms : register(b0, space3)
     float4 fogColor;
     float  contrast;
     float  brightness;
-    float2 _pad;
+    float  carShine;   /* car*: game_car_pixel.hlsl only */
+    float  carGlint;
+    float  carDark;
+    float  carSmooth;
+    float  carBevel;
+    float  carSun;
+    float4 sunDir;     /* xyz: towards the sun (world); w: sun shading strength, 0 = off */
+    float4 camPos;     /* camera position (world) */
 };
 
 struct PixelInput
@@ -18,14 +25,18 @@ struct PixelInput
     float4 position : SV_Position;
     float2 uv       : TEXCOORD0;
     float  fogDepth : TEXCOORD1;
+    float3 worldPos : TEXCOORD2;
 };
 
 float4 main(PixelInput input) : SV_Target
 {
+    /* No sun shading on this multiply pass; reading every input keeps the
+     * Direct3D 12 signature lined up with the vertex shader. */
+    float  keep  = (input.position.x + input.fogDepth + input.worldPos.x) * 1e-30;
     float4 color = sceneTexture.Sample(sceneSampler, input.uv);
     if (color.a < 0.5) discard;
 
-    color.rgb = pow(max(color.rgb, 0.00001), 1.0 / gamma);
+    color.rgb = pow(max(color.rgb + keep, 0.00001), 1.0 / gamma);
 
     float fogDepthAdj = max(0.0, input.fogDepth - fogStart);
     float fogFactor   = saturate(1.0 - exp(-fogDensity * fogDensity * fogDepthAdj * fogDepthAdj));

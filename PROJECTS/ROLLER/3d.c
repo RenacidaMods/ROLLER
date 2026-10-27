@@ -3931,6 +3931,7 @@ void play_game_init()
   game_render_set_car_shine(g_pGameRenderer, g_fCarShine, g_fCarShineGlint, g_fCarShineDark,
                             g_fCarShineSmooth, g_fCarShineBevel);
   game_render_set_sky_gradient(g_pGameRenderer, g_fSkyGradient);
+  game_render_set_sun_shade(g_pGameRenderer, g_fSunShade);
   game_render_set_brightness(g_pGameRenderer, g_fBrightness);
   game_render_set_fov_multiplier(g_pGameRenderer, g_fFovMultiplier);
   game_render_set_emulate_software_track_borders(g_pGameRenderer, g_bEmulateSoftwareTrackBorders);

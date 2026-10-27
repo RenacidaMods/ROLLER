@@ -417,10 +417,10 @@ static void ReplayMeshDraws(MenuRendererGPU *r, SDL_GPURenderPass *renderPass)
                 float fogDensity, gamma, fogStart, saturation;
                 float fogColor[4];
                 float contrast, brightness;
-                float carShine, carGlint, carDark, carSmooth, carBevel, _pad;
+                float carShine, carGlint, carDark, carSmooth, carBevel, carSun;
             } pu = { 0.0f, 1.0f, 0.0f, 1.0f, {0.7f, 0.75f, 0.8f, 1.0f}, 1.0f, 0.0f,
                      g_fCarShine, g_fCarShineGlint, g_fCarShineDark, g_fCarShineSmooth,
-                     g_fCarShineBevel, 0.0f };
+                     g_fCarShineBevel, g_fSunShade };   /* same sun as race cars */
             SDL_PushGPUFragmentUniformData(r->cmdBuf, 0, &pu, sizeof(pu));
         } else {
             SDL_PushGPUVertexUniformData(r->cmdBuf, 0, cmd->mvp, sizeof(cmd->mvp));

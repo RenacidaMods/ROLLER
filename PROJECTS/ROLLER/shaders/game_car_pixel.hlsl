@@ -15,7 +15,7 @@ cbuffer ScenePixelUniforms : register(b0, space3)
     float  carDark;    /* how dark the reflected ground and skyline are, 1 = default */
     float  carSmooth;  /* flat panels (0) to smoothed corner normals (1, default) */
     float  carBevel;   /* width of the rounded strip along panel edges, 0-1 */
-    float  _pad2;
+    float  carSun;     /* sun shading strength (same sun as the world), 0 = off */
 };
 
 struct PixelInput
@@ -126,8 +126,33 @@ float4 main(PixelInput input) : SV_Target
         glint = (pow(sd, 400.0) * 3.0 + pow(sd, 24.0) * 0.25) * saturate(carShine) * carGlint * lowFade;
     }
 
+    /* Sun shading: half-Lambert from the same sun as the world shading
+     * (and the glint above), on the smoothed normal so it rolls round the
+     * body; the paint darkens on the side away from the sun. */
+    float sunK = 1.0;
+    if (carSun > 0.0 && nLen > 1e-12)
+    {
+        float3 Vs  = normalize(input.toCam);
+        float3 Ns  = faceN / nLen;
+        if (dot(Ns, Vs) < 0.0) Ns = -Ns;
+        float  sLn = length(input.smoothN);
+        if (carSmooth > 0.0 && sLn > 1e-6)
+        {
+            float3 S = input.smoothN / sLn;
+            if (dot(S, Ns) < 0.0) S = -S;
+            Ns = normalize(lerp(Ns, S, carSmooth));
+        }
+        float3 upS = normalize(input.up);
+        float3 exS = normalize(input.xAxis - upS * dot(input.xAxis, upS));
+        float3 eyS = cross(upS, exS);
+        float3 sunS = normalize(exS * 0.60 + eyS * 0.45 + upS * 0.66);
+        float  wrap = saturate(dot(Ns, sunS) * 0.5 + 0.5);
+        sunK = 1.0 - carSun * 0.45 * (1.0 - wrap);
+    }
+
     float4 texColor   = meshTexture.Sample(meshSampler, input.uv);
     float4 finalColor = texColor * input.color;
+    finalColor.rgb *= sunK;
 
     if (finalColor.a < 0.01)
         discard;

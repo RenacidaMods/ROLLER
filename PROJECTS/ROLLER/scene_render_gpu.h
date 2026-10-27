@@ -167,6 +167,9 @@ void scene_render_gpu_set_car_shine(SceneRendererGPU *r, float strength, float g
 /* Sky gradient: 0 = the original flat sky colour, 1 = default (pale horizon
  * to deeper overhead, from the track's own sky colour), up to 2. */
 void scene_render_gpu_set_sky_gradient(SceneRendererGPU *r, float amount);
+/* Sun shading on track, walls, buildings, signs and cars: surfaces turned
+ * away from the sun darken, by up to 45% at 1.0 (0 = off, 0.6 default). */
+void scene_render_gpu_set_sun_shade(SceneRendererGPU *r, float strength);
 /* Set each frame: while an in-race menu is drawn on the HUD, HUD scale is
  * suspended so the menu isn't split into separately scaled pieces. */
 void scene_render_gpu_set_hud_menu_open(SceneRendererGPU *r, bool open);

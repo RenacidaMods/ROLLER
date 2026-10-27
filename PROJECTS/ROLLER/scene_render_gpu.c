@@ -468,6 +468,7 @@ struct SceneRendererGPU {
     float carSmooth;       /* car shine: blend from flat panels (0) to smoothed normals (1) */
     float carBevel;        /* car shine: width of the rounded strip along panel edges, 0-1 */
     float skyGradient;     /* sky: 0 = original flat colour, 1 = default horizon-to-zenith gradient */
+    float sunShade;        /* sun shading strength on walls, buildings, track and cars, 0 = off */
     bool  skyGradientShader; /* skyPipeline uses game_scene_sky_pixel (else the flat sfOp sky) */
     float fovMultiplier;   /* FOV multiplier applied on top of the game camera; 1.0 = native */
     bool  wireframe;       /* render geometry as wireframe */
@@ -962,10 +963,11 @@ static bool sky_mat4_invert(float out[16], const float m[16])
  * inverse view-projection plus a horizon and a zenith colour made from the
  * track's (fogged) sky colour -- paler towards the horizon, deeper overhead,
  * scaled by the Sky gradient setting and faded out as fog takes over the
- * sky. Otherwise the original flat sky via fog overdrive. */
-static void push_sky_uniforms(SceneRendererGPU *r, SDL_FColor skyFColor)
+ * sky. Otherwise (or for editor/parity readbacks) the original flat sky via
+ * fog overdrive. */
+static void push_sky_uniforms(SceneRendererGPU *r, SDL_FColor skyFColor, bool flat)
 {
-    if (!r->skyGradientShader) {
+    if (!r->skyGradientShader || flat) {
         struct { float fogDensity, gamma, fogStart, saturation;
                  float fogColor[4]; float contrast, brightness; float _pad[2]; } skyU = {
             1e9f, 1.0f, 0.0f, 1.0f,
@@ -996,6 +998,29 @@ static void push_sky_uniforms(SceneRendererGPU *r, SDL_FColor skyFColor)
     }
     u.horizon[3] = u.zenith[3] = 1.0f;
     SDL_PushGPUFragmentUniformData(r->cmdBuf, 0, &u, sizeof(u));
+}
+
+/* Sun shading uniforms for the scene pixel shaders: the direction towards
+ * the sun in world space (the same sun as the car shine's glint, up = +Z)
+ * with the strength in w, and the camera's world position, recovered from
+ * the inverse view-projection (inverse(vp) * (0,0,1,0) is the eye). */
+static void fill_sun_uniforms(const SceneRendererGPU *r, float sun[4], float camPos[4])
+{
+    const float sx = 0.60f, sy = 0.45f, sz = 0.66f;
+    float len = sqrtf(sx * sx + sy * sy + sz * sz);
+    sun[0] = sx / len;  sun[1] = sy / len;  sun[2] = sz / len;
+    sun[3] = r->sunShade;
+    camPos[0] = camPos[1] = camPos[2] = 0.0f;
+    camPos[3] = 1.0f;
+    float vp[16], ivp[16];
+    scene_render_gpu_build_vp(r, vp);
+    if (sky_mat4_invert(ivp, vp) && fabsf(ivp[11]) > 1e-20f) {
+        camPos[0] = ivp[8] / ivp[11];
+        camPos[1] = ivp[9] / ivp[11];
+        camPos[2] = ivp[10] / ivp[11];
+    } else {
+        sun[3] = 0.0f;
+    }
 }
 
 /* The projection terms build_mvp uses for the current viewport, for passes
@@ -1914,6 +1939,7 @@ SceneRendererGPU *scene_render_gpu_create(SDL_GPUDevice *device, SDL_Window *win
     r->carSmooth       = 1.0f;
     r->carBevel        = 0.25f;
     r->skyGradient     = 1.0f;
+    r->sunShade        = 0.6f;
     r->contrast        = 1.0f;
     r->fovMultiplier   = 1.0f;
     r->skyR = 0.25f; r->skyG = 0.45f; r->skyB = 0.75f;
@@ -2860,7 +2886,7 @@ SDL_GPUTexture *scene_render_gpu_flush_secondary_view(SceneRendererGPU *r, int s
             SDL_BindGPUGraphicsPipeline(rp, r->skyPipeline);
             float identMVP[16] = {1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1};
             SDL_PushGPUVertexUniformData(r->cmdBuf, 0, identMVP, sizeof(identMVP));
-            push_sky_uniforms(r, skyFColor);
+            push_sky_uniforms(r, skyFColor, false);
             SDL_GPUBufferBinding gvbb = {.buffer = r->skyVertBuf};
             SDL_BindGPUVertexBuffers(rp, 0, &gvbb, 1);
             SDL_GPUTextureSamplerBinding gtsb = {.texture = gTex, .sampler = r->samplerNearest};
@@ -2881,7 +2907,9 @@ SDL_GPUTexture *scene_render_gpu_flush_secondary_view(SceneRendererGPU *r, int s
         float fogDensity, gamma, fogStart, saturation;
         float fogColor[4];
         float contrast, brightness;
-        float carShine, carGlint, carDark, carSmooth, carBevel, _pad;  /* car*: game_car_pixel.hlsl only */
+        float carShine, carGlint, carDark, carSmooth, carBevel, carSun;  /* car*: game_car_pixel.hlsl only */
+        float sun[4];     /* xyz towards the sun (world), w = sun shading strength */
+        float camPos[4];  /* camera position (world), to face the shading normal */
     } pfu = {
         r->fogDensity,
         (r->gamma > 0.0f)       ? r->gamma       : 1.0f,
@@ -2890,8 +2918,10 @@ SDL_GPUTexture *scene_render_gpu_flush_secondary_view(SceneRendererGPU *r, int s
         {r->fogColor[0], r->fogColor[1], r->fogColor[2], r->fogColor[3]},
         (r->contrast > 0.0f)    ? r->contrast     : 1.0f,
         r->brightness,
-        0.0f, r->carGlint, r->carDark, r->carSmooth, r->carBevel, 0.0f
+        0.0f, r->carGlint, r->carDark, r->carSmooth, r->carBevel, 0.0f,
+        {0.0f, 0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 0.0f, 0.0f}
     };
+    fill_sun_uniforms(r, pfu.sun, pfu.camPos);
     SDL_PushGPUFragmentUniformData(r->cmdBuf, 0, &pfu, sizeof(pfu));
 
     /* World-space quads (SceneGPUDrawCmd) share one VP (no per-object model
@@ -2910,6 +2940,10 @@ SDL_GPUTexture *scene_render_gpu_flush_secondary_view(SceneRendererGPU *r, int s
      * an acceptable simplification for this secondary, lower-detail view. */
     if (r->signPipeline)   { SDL_BindGPUGraphicsPipeline(rp, r->signPipeline);   draw_cmd_kind(r, rp, &tsb, NULL, drawOrder, SCENE_GPU_DRAW_SIGN); }
     if (r->signBkPipeline) { SDL_BindGPUGraphicsPipeline(rp, r->signBkPipeline); draw_cmd_kind(r, rp, &tsb, NULL, drawOrder, SCENE_GPU_DRAW_SIGN_BK); }
+    /* No sun shading from here on: trees are camera-facing cut-outs, and the
+     * darken, blend (clouds, glass) and shadow passes aren't surfaces. */
+    pfu.sun[3] = 0.0f;
+    SDL_PushGPUFragmentUniformData(r->cmdBuf, 0, &pfu, sizeof(pfu));
     if (r->treePipeline)   { SDL_BindGPUGraphicsPipeline(rp, r->treePipeline);   draw_cmd_kind(r, rp, &tsb, NULL, drawOrder, SCENE_GPU_DRAW_TREE); }
     /* Multiply-blend darken pass for TRANSPARENT non-textured track quads (glass/
      * divider walls) -- must run after opaque/wall/building/sign/tree so there's
@@ -2921,8 +2955,10 @@ SDL_GPUTexture *scene_render_gpu_flush_secondary_view(SceneRendererGPU *r, int s
     if (r->carDrawCount > 0 && r->carPipeline) {
         SDL_BindGPUGraphicsPipeline(rp, r->carPipeline);
         pfu.carShine = r->carShine;
+        pfu.carSun   = r->sunShade;
         SDL_PushGPUFragmentUniformData(r->cmdBuf, 0, &pfu, sizeof(pfu));
         pfu.carShine = 0.0f;
+        pfu.carSun   = 0.0f;
         for (int i = 0; i < r->carDrawCount; i++) {
             SceneGPUCarDrawCmd *cmd = &r->carDraws[i];
             if (!cmd->texture) continue;
@@ -3657,7 +3693,7 @@ static bool scene_render_gpu_end_frame_internal(SceneRendererGPU *r,
             SDL_BindGPUGraphicsPipeline(rp, r->skyPipeline);
             float identMVP[16] = {1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1};
             SDL_PushGPUVertexUniformData(r->cmdBuf, 0, identMVP, sizeof(identMVP));
-            push_sky_uniforms(r, skyFColor);
+            push_sky_uniforms(r, skyFColor, bReadback);
             SDL_GPUBufferBinding gvbb = {.buffer = r->skyVertBuf};
             SDL_BindGPUVertexBuffers(rp, 0, &gvbb, 1);
             SDL_GPUTextureSamplerBinding gtsb = {.texture = gTex, .sampler = r->samplerNearest};
@@ -3679,7 +3715,9 @@ static bool scene_render_gpu_end_frame_internal(SceneRendererGPU *r,
         float fogDensity, gamma, fogStart, saturation;
         float fogColor[4];
         float contrast, brightness;
-        float carShine, carGlint, carDark, carSmooth, carBevel, _pad;  /* car*: game_car_pixel.hlsl only */
+        float carShine, carGlint, carDark, carSmooth, carBevel, carSun;  /* car*: game_car_pixel.hlsl only */
+        float sun[4];     /* xyz towards the sun (world), w = sun shading strength */
+        float camPos[4];  /* camera position (world), to face the shading normal */
     } pfu = {
         r->fogDensity,
         (r->gamma > 0.0f)       ? r->gamma       : 1.0f,
@@ -3688,8 +3726,14 @@ static bool scene_render_gpu_end_frame_internal(SceneRendererGPU *r,
         {r->fogColor[0], r->fogColor[1], r->fogColor[2], r->fogColor[3]},
         (r->contrast > 0.0f)    ? r->contrast     : 1.0f,
         r->brightness,
-        0.0f, r->carGlint, r->carDark, r->carSmooth, r->carBevel, 0.0f
+        0.0f, r->carGlint, r->carDark, r->carSmooth, r->carBevel, 0.0f,
+        {0.0f, 0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 0.0f, 0.0f}
     };
+    fill_sun_uniforms(r, pfu.sun, pfu.camPos);
+    /* Editor and parity readbacks keep their exact output (as with AO). */
+    if (bReadback)
+        pfu.sun[3] = 0.0f;
+    const float sunNow = pfu.sun[3];
     SDL_PushGPUFragmentUniformData(r->cmdBuf, 0, &pfu, sizeof(pfu));
 
     /* World-space quads (SceneGPUDrawCmd) share one VP (no per-object model
@@ -3729,6 +3773,10 @@ static bool scene_render_gpu_end_frame_internal(SceneRendererGPU *r,
         SDL_BindGPUGraphicsPipeline(rp, r->bfBuildingPipeline);
         draw_cmd_kind(r, rp, &tsb, NULL, drawOrder, SCENE_GPU_DRAW_BF_BUILDING);
     }
+    /* No sun shading from here on: trees are camera-facing cut-outs, and the
+     * darken, blend (clouds, glass) and shadow passes aren't surfaces. */
+    pfu.sun[3] = 0.0f;
+    SDL_PushGPUFragmentUniformData(r->cmdBuf, 0, &pfu, sizeof(pfu));
     if (r->treePipeline) {
         SDL_BindGPUGraphicsPipeline(rp, r->treePipeline);
         draw_cmd_kind(r, rp, &tsb, NULL, drawOrder, SCENE_GPU_DRAW_TREE);
@@ -3749,8 +3797,10 @@ static bool scene_render_gpu_end_frame_internal(SceneRendererGPU *r,
     if (r->carDrawCount > 0 && r->carPipeline) {
         SDL_BindGPUGraphicsPipeline(rp, r->carPipeline);
         pfu.carShine = r->carShine;
+        pfu.carSun   = sunNow;
         SDL_PushGPUFragmentUniformData(r->cmdBuf, 0, &pfu, sizeof(pfu));
         pfu.carShine = 0.0f;
+        pfu.carSun   = 0.0f;
         for (int i = 0; i < r->carDrawCount; i++) {
             SceneGPUCarDrawCmd *cmd = &r->carDraws[i];
             if (!cmd->texture) continue;
@@ -3897,6 +3947,7 @@ static bool scene_render_gpu_end_frame_internal(SceneRendererGPU *r,
         rp = SDL_BeginGPURenderPass(r->cmdBuf, &colorInfoB, 1, &depthInfoB);
         SDL_SetGPUViewport(rp, &vp);
         SDL_BindGPUVertexBuffers(rp, 0, &vbb, 1);
+        pfu.sun[3] = sunNow;        /* signs shade like the buildings they sit on */
         SDL_PushGPUFragmentUniformData(r->cmdBuf, 0, &pfu, sizeof(pfu));
         SDL_PushGPUVertexUniformData(r->cmdBuf, 0, viewVP, sizeof(viewVP));
 
@@ -4478,6 +4529,12 @@ void scene_render_gpu_set_sky_gradient(SceneRendererGPU *r, float amount)
 {
     if (!r) return;
     r->skyGradient = (amount < 0.0f) ? 0.0f : (amount > 2.0f) ? 2.0f : amount;
+}
+
+void scene_render_gpu_set_sun_shade(SceneRendererGPU *r, float strength)
+{
+    if (!r) return;
+    r->sunShade = (strength < 0.0f) ? 0.0f : (strength > 1.0f) ? 1.0f : strength;
 }
 
 void scene_render_gpu_set_hud_map_scale(SceneRendererGPU *r, float scale)

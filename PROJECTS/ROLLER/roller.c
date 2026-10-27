@@ -181,6 +181,7 @@ float g_fCarShineDark     = 0.55f;
 float g_fCarShineSmooth   = 1.0f;
 float g_fCarShineBevel    = 0.25f;
 float g_fSkyGradient      = 1.0f;
+float g_fSunShade         = 0.6f;
 bool  g_bRenderNative     = false;
 bool  g_pendingClickQuery = false;
 float g_clickQueryNX      = 0.0f;

@@ -19,6 +19,7 @@ struct PixelInput
     float4 position : SV_Position;
     float2 uv       : TEXCOORD0;
     float  fogDepth : TEXCOORD1;
+    float3 worldPos : TEXCOORD2;
 };
 
 float4 main(PixelInput input) : SV_Target
@@ -30,7 +31,7 @@ float4 main(PixelInput input) : SV_Target
     /* World up is +Z. The tiny position and fogDepth terms change nothing;
      * reading every input keeps this shader's input signature lined up
      * with the scene vertex shader's outputs, which Direct3D 12 requires. */
-    float  el    = saturate(dir.z + (input.position.x + input.fogDepth) * 1e-30);
+    float  el    = saturate(dir.z + (input.position.x + input.fogDepth + input.worldPos.x) * 1e-30);
     float  t     = sqrt(el);
     return float4(lerp(horizonColor.rgb, zenithColor.rgb, t), 1.0);
 }
