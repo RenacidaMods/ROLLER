@@ -68,6 +68,7 @@ float4 main(PixelInput input) : SV_Target
     float3 env   = float3(0.0, 0.0, 0.0);
     float  k     = 0.0;
     float  glint = 0.0;
+    float  groundW = 0.0;   /* how much of env is reflected ground */
     float3 faceN = cross(ddx(input.objPos), ddy(input.objPos));
     float  nLen  = length(faceN);
     if (carShine > 0.0 && nLen > 1e-12)
@@ -103,6 +104,10 @@ float4 main(PixelInput input) : SV_Target
         float3 R   = reflect(-V, N);
 
         float3 up  = normalize(input.up);
+        /* Underside: panels turning to face the ground (sills, the strip
+         * under the doors) sit in the car's own shade, so the shine fades
+         * out as the normal tips downward. Upright doors keep all of it. */
+        float  lowFade = smoothstep(-0.45, -0.05, dot(N, up));
         float3 ex  = normalize(input.xAxis - up * dot(input.xAxis, up));
         float3 ey  = cross(up, ex);
         float  el  = dot(R, up);
@@ -110,12 +115,13 @@ float4 main(PixelInput input) : SV_Target
         float  elWidth = max(fwidth(el), 0.002);
 
         env = car_environment(el, az, elWidth, saturate(carDark));
+        groundW = saturate(0.5 - el / elWidth);
         float fresnel = 0.25 + 0.75 * pow(1.0 - saturate(ndv), 4.0);
-        k = saturate(carShine * 0.6 * fresnel);
+        k = saturate(carShine * 0.6 * fresnel) * lowFade;
 
         float3 sunDir = normalize(ex * 0.60 + ey * 0.45 + up * 0.66);
         float  sd     = saturate(dot(R, sunDir));
-        glint = (pow(sd, 400.0) * 3.0 + pow(sd, 24.0) * 0.25) * saturate(carShine) * carGlint;
+        glint = (pow(sd, 400.0) * 3.0 + pow(sd, 24.0) * 0.25) * saturate(carShine) * carGlint * lowFade;
     }
 
     float4 texColor   = meshTexture.Sample(meshSampler, input.uv);
@@ -124,7 +130,10 @@ float4 main(PixelInput input) : SV_Target
     if (finalColor.a < 0.01)
         discard;
 
-    finalColor.rgb = saturate(lerp(finalColor.rgb, env, k) + glint);
+    /* Reflected ground only ever darkens the paint: a grey ground lifted
+     * dark paint on the lower panels, where the car should look darkest. */
+    float3 target = lerp(env, min(finalColor.rgb, env), groundW);
+    finalColor.rgb = saturate(lerp(finalColor.rgb, target, k) + glint);
 
     finalColor.rgb = pow(max(finalColor.rgb, 0.00001), 1.0 / gamma);
 
