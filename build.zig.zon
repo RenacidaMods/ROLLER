@@ -9,8 +9,8 @@
             .hash = "SDL_image-3.2.4--aJoHb8WAACjnDQ_-PhUi-MNh_mYFODwxANtvY3F-yLe",
         },
         .sdl = .{
-            .url = "git+https://github.com/Zizin13/SDL#c8789580c0f4f0b1bdc268ab5c52082864f3e2a8",
-            .hash = "sdl-0.3.0+3.2.22-7uIn9Is4fwGyNwHnYNTLnZP1WBhWxa5V2WS34x9X_jm8",
+            .url = "git+https://github.com/RenacidaMods/SDL#2d4358cc58fd0f3a4d0ae8b32151f729002f2a8a",
+            .hash = "sdl-0.3.0+3.2.22-7uIn9CA5fwE-WgWTanhBivGAbmnQ_lqdrLGBPFB2pNl3",
         },
         .wildmidi = .{
             .url = "git+https://github.com/deevus/wildmidi#4cdc96129d59ee7fc81cf160dc13e0625be77fba",
