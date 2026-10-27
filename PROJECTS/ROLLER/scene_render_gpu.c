@@ -183,6 +183,7 @@ typedef struct {
     float           shine[12];
     float           world[16];   /* model -> world, for the car shadow map */
     bool            hasWorld;
+    float           dark;        /* tunnel darkening, 0 = none (game_car_pixel shadowParams.z) */
 } SceneGPUCarDrawCmd;
 
 /* --------------------------------------------------------------------------
@@ -3205,9 +3206,14 @@ SDL_GPUTexture *scene_render_gpu_flush_secondary_view(SceneRendererGPU *r, int s
         SDL_PushGPUFragmentUniformData(r->cmdBuf, 0, &pfu, sizeof(pfu));
         pfu.carShine = 0.0f;
         pfu.carSun   = 0.0f;
+        pfu.shadow[2] = 0.0f;
         for (int i = 0; i < r->carDrawCount; i++) {
             SceneGPUCarDrawCmd *cmd = &r->carDraws[i];
             if (!cmd->texture) continue;
+            if (cmd->dark != pfu.shadow[2]) {   /* per-car tunnel darkening */
+                pfu.shadow[2] = cmd->dark;
+                SDL_PushGPUFragmentUniformData(r->cmdBuf, 0, &pfu, sizeof(pfu));
+            }
             SDL_PushGPUVertexUniformData(r->cmdBuf, 0, cmd->mvp, sizeof(cmd->mvp) + sizeof(cmd->shine));
             SDL_GPUBufferBinding cvbb = {.buffer = cmd->vertBuf};
             SDL_BindGPUVertexBuffers(rp, 0, &cvbb, 1);
@@ -4063,9 +4069,14 @@ static bool scene_render_gpu_end_frame_internal(SceneRendererGPU *r,
         SDL_PushGPUFragmentUniformData(r->cmdBuf, 0, &pfu, sizeof(pfu));
         pfu.carShine = 0.0f;
         pfu.carSun   = 0.0f;
+        pfu.shadow[2] = 0.0f;
         for (int i = 0; i < r->carDrawCount; i++) {
             SceneGPUCarDrawCmd *cmd = &r->carDraws[i];
             if (!cmd->texture) continue;
+            if (cmd->dark != pfu.shadow[2]) {   /* per-car tunnel darkening */
+                pfu.shadow[2] = cmd->dark;
+                SDL_PushGPUFragmentUniformData(r->cmdBuf, 0, &pfu, sizeof(pfu));
+            }
             SDL_PushGPUVertexUniformData(r->cmdBuf, 0, cmd->mvp, sizeof(cmd->mvp) + sizeof(cmd->shine));
             SDL_GPUBufferBinding cvbb = {.buffer = cmd->vertBuf};
             SDL_BindGPUVertexBuffers(rp, 0, &cvbb, 1);
@@ -7416,6 +7427,13 @@ void scene_render_gpu_queue_car_draw(SceneRendererGPU *r,
     else       memset(cmd->shine, 0, sizeof(cmd->shine));
     cmd->hasWorld = world != NULL;
     if (world) memcpy(cmd->world, world, sizeof(cmd->world));
+    cmd->dark = 0.0f;
+}
+
+void scene_render_gpu_set_last_car_dark(SceneRendererGPU *r, float dark)
+{
+    if (!r || r->carDrawCount <= 0) return;
+    r->carDraws[r->carDrawCount - 1].dark = (dark < 0.0f) ? 0.0f : (dark > 1.0f) ? 1.0f : dark;
 }
 
 void scene_render_gpu_queue_car_shadow_draw(SceneRendererGPU *r,

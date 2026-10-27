@@ -799,6 +799,40 @@ static void car_model_matrix(float M[16], const GameRenderCarPose *pose)
 }
 
 /* Column-major chunk transform from localdata[chunk].pointAy. */
+/* Under a roofed section (surface type 5/6/9 on the car's side of the
+ * centre line, below the roof): the same test car.c uses for the airborne
+ * shadow. ly/lz are the car's position across and above the section. */
+static bool car_under_roof(int chunk, float ly, float lz)
+{
+    const tData *sd = &localdata[chunk];
+    const tTrackInfo *ti = &TrackInfo[chunk];
+    if (ly <= 0.0f) {
+        int t = ti->iRightSurfaceType;
+        return -sd->fTrackHalfWidth < ly && (t == 5 || t == 6 || t == 9) && lz < ti->fRoofHeight;
+    }
+    int t = ti->iLeftSurfaceType;
+    return ly < sd->fTrackHalfWidth && (t == 5 || t == 6 || t == 9) && lz < ti->fRoofHeight;
+}
+
+/* How much a car is darkened in tunnels: the track's painted tunnel
+ * shadows darken the road, but cars were drawn over them untouched. Eases
+ * in and out over about a quarter of a second so there's no pop at the
+ * section edge. */
+#define GRHW_TUNNEL_DARK 0.45f
+static float car_tunnel_dark(int carIdx, bool underRoof)
+{
+    static float s_fDark[GAME_RENDER_HW_NUM_CARS];
+    static Uint64 s_uiLastNs[GAME_RENDER_HW_NUM_CARS];
+    Uint64 now = SDL_GetTicksNS();
+    float dt = s_uiLastNs[carIdx] ? (float)(now - s_uiLastNs[carIdx]) * 1e-9f : 1.0f;
+    s_uiLastNs[carIdx] = now;
+    if (dt > 1.0f) dt = 1.0f;
+    float target = underRoof ? GRHW_TUNNEL_DARK : 0.0f;
+    float k = 1.0f - expf(-dt / 0.12f);
+    s_fDark[carIdx] += (target - s_fDark[carIdx]) * k;
+    return s_fDark[carIdx];
+}
+
 static void chunk_model_matrix(float M[16], const tData *d)
 {
     M[ 0]=d->pointAy[0].fX; M[ 1]=d->pointAy[1].fX; M[ 2]=d->pointAy[2].fX; M[ 3]=0.0f;
@@ -916,6 +950,8 @@ void game_render_hw_draw_car(GameRendererHardware       *r,
         scene_render_gpu_queue_car_draw(scene,
             vertBuf, mesh->indexBuf, mesh->atlas,
             0, mesh->bodyIndexCount, mvp, shine, Mcar_chunk);
+        scene_render_gpu_set_last_car_dark(scene,
+            car_tunnel_dark(carIdx, car_under_roof(chunk, pose->position.fY, pose->position.fZ)));
 
         /* Shadow: use physical pose (no camera lean offsets) so shadow corners
          * stay exactly on the road surface.  adjPose tilts the quad slightly
@@ -975,6 +1011,7 @@ void game_render_hw_draw_car(GameRendererHardware       *r,
         scene_render_gpu_queue_car_draw(scene,
             vertBuf, mesh->indexBuf, mesh->atlas,
             0, mesh->bodyIndexCount, mvp, shine, M);
+        scene_render_gpu_set_last_car_dark(scene, car_tunnel_dark(carIdx, false));   /* airborne: out of tunnels */
 
         /* Shadow: replicate car.c:1339-1431's full branch choice for this
          * car's own airborne shadow (3 cases, matching SW exactly):

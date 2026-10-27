@@ -16,6 +16,9 @@ cbuffer ScenePixelUniforms : register(b0, space3)
     float  carSmooth;  /* flat panels (0) to smoothed corner normals (1, default) */
     float  carBevel;   /* width of the rounded strip along panel edges, 0-1 */
     float  carSun;     /* sun shading strength (same sun as the world), 0 = off */
+    float4 sunDir;     /* world shaders only */
+    float4 camPos;     /* world shaders only */
+    float4 shadowParams;  /* z: this car's darkening (tunnels), 0 = none */
 };
 
 struct PixelInput
@@ -174,6 +177,8 @@ float4 main(PixelInput input) : SV_Target
      * dark paint on the lower panels, where the car should look darkest. */
     float3 target = lerp(env, min(finalColor.rgb, env), groundW);
     finalColor.rgb = saturate(lerp(finalColor.rgb, target, k) + glint);
+    /* In a tunnel the whole car dims, reflection and glint included. */
+    finalColor.rgb *= 1.0 - saturate(shadowParams.z);
 
     finalColor.rgb = pow(max(finalColor.rgb, 0.00001), 1.0 / gamma);
 

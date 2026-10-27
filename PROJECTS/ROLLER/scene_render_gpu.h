@@ -291,6 +291,8 @@ void scene_render_gpu_queue_car_draw(SceneRendererGPU *r,
                                       const float       mvp[16],
                                       const float       shine[12],
                                       const float       world[16]);   /* model -> world, NULL: no car shadow */
+/* Darkening for the car draw just queued, 0-1 (cars in tunnels). */
+void scene_render_gpu_set_last_car_dark(SceneRendererGPU *r, float dark);
 
 /* Queue a car shadow draw — uses carShadowPipeline (LESS_OR_EQUAL, no depth write, biased). */
 void scene_render_gpu_queue_car_shadow_draw(SceneRendererGPU *r,
