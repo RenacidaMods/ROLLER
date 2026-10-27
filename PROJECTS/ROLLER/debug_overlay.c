@@ -1126,7 +1126,7 @@ static void DrawLookSettings(struct nk_context *pCtx, bool bGPU) {
   { char buf[24]; snprintf(buf, sizeof(buf), "Car shine %.0f%%", g_fCarShine * 100.0f);
     nk_layout_row_dynamic(pCtx, DEBUG_ROW_H, 2);
     nk_label(pCtx, buf, NK_TEXT_LEFT);
-    float fNewShine = nk_slide_float(pCtx, 0.0f, g_fCarShine, 2.0f, 0.05f);
+    float fNewShine = nk_slide_float(pCtx, 0.0f, g_fCarShine, 3.0f, 0.05f);
     if (fNewShine != g_fCarShine) {
       g_fCarShine = fNewShine;
       game_render_set_car_shine(g_pGameRenderer, g_fCarShine, g_fCarShineGlint, g_fCarShineDark, g_fCarShineSmooth, g_fCarShineBevel);
@@ -1137,7 +1137,7 @@ static void DrawLookSettings(struct nk_context *pCtx, bool bGPU) {
   { char buf[24]; snprintf(buf, sizeof(buf), "Shine glint %.0f%%", g_fCarShineGlint * 100.0f);
     nk_layout_row_dynamic(pCtx, DEBUG_ROW_H, 2);
     nk_label(pCtx, buf, NK_TEXT_LEFT);
-    float fNewGlint = nk_slide_float(pCtx, 0.0f, g_fCarShineGlint, 4.0f, 0.05f);
+    float fNewGlint = nk_slide_float(pCtx, 0.0f, g_fCarShineGlint, 8.0f, 0.1f);
     if (fNewGlint != g_fCarShineGlint) {
       g_fCarShineGlint = fNewGlint;
       game_render_set_car_shine(g_pGameRenderer, g_fCarShine, g_fCarShineGlint, g_fCarShineDark, g_fCarShineSmooth, g_fCarShineBevel);
@@ -1753,8 +1753,8 @@ static void DrawDebugPanel(DebugOverlay *pOverlay) {
         g_fFovMultiplier  = 1.0f;  g_fVigStrength    = 0.0f;
         g_bAmbientOcclusion = false; g_fAORadius = 400.0f; g_fAOStrength = 1.0f;
         g_fHUDScale       = 1.0f;  g_fHUDMapScale    = 1.0f;
-        g_fCarShine       = 0.0f;  g_fCarShineGlint  = 2.0f;  g_fCarShineDark = 1.0f;
-        g_fCarShineSmooth = 1.0f;  g_fCarShineBevel = 0.5f;
+        g_fCarShine       = 1.5f;  g_fCarShineGlint  = 4.0f;  g_fCarShineDark = 0.85f;
+        g_fCarShineSmooth = 1.0f;  g_fCarShineBevel = 0.25f;
         g_fMirrorFov      = 0.75f;
         g_fBrightness     = 0.0f;  g_fContrast       = 1.0f;
         g_fGamma          = 1.0f;  g_fSaturation     = 1.0f;

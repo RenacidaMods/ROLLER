@@ -1839,10 +1839,10 @@ SceneRendererGPU *scene_render_gpu_create(SDL_GPUDevice *device, SDL_Window *win
     r->fogColor[2]     = 0.80f;
     r->fogColor[3]     = 1.0f;
     r->saturation      = 1.0f;
-    r->carGlint        = 2.0f;
-    r->carDark         = 1.0f;
+    r->carGlint        = 4.0f;
+    r->carDark         = 0.85f;
     r->carSmooth       = 1.0f;
-    r->carBevel        = 0.5f;
+    r->carBevel        = 0.25f;
     r->contrast        = 1.0f;
     r->fovMultiplier   = 1.0f;
     r->skyR = 0.25f; r->skyG = 0.45f; r->skyB = 0.75f;
@@ -4406,8 +4406,8 @@ void scene_render_gpu_set_car_shine(SceneRendererGPU *r, float strength, float g
                                     float smooth, float bevel)
 {
     if (!r) return;
-    r->carShine = (strength < 0.0f) ? 0.0f : (strength > 2.0f) ? 2.0f : strength;
-    r->carGlint = (glint < 0.0f) ? 0.0f : (glint > 4.0f) ? 4.0f : glint;
+    r->carShine = (strength < 0.0f) ? 0.0f : (strength > 3.0f) ? 3.0f : strength;
+    r->carGlint = (glint < 0.0f) ? 0.0f : (glint > 8.0f) ? 8.0f : glint;
     r->carDark  = (dark < 0.0f) ? 0.0f : (dark > 1.0f) ? 1.0f : dark;
     r->carSmooth = (smooth < 0.0f) ? 0.0f : (smooth > 1.0f) ? 1.0f : smooth;
     r->carBevel  = (bevel < 0.0f) ? 0.0f : (bevel > 1.0f) ? 1.0f : bevel;

@@ -3410,13 +3410,13 @@ static int InputParseDebugSetting(const char *szName, const char *szValue)
 
   if (InputStringEqualsNoCase(szName, "CarShineGlint")) {
     g_fCarShineGlint = (float)atof(szValue);
-    if (g_fCarShineGlint < 0.0f || g_fCarShineGlint > 4.0f) g_fCarShineGlint = 2.0f;
+    if (g_fCarShineGlint < 0.0f || g_fCarShineGlint > 8.0f) g_fCarShineGlint = 4.0f;
     return 1;
   }
 
   if (InputStringEqualsNoCase(szName, "CarShineBevel")) {
     g_fCarShineBevel = (float)atof(szValue);
-    if (g_fCarShineBevel < 0.0f || g_fCarShineBevel > 1.0f) g_fCarShineBevel = 0.5f;
+    if (g_fCarShineBevel < 0.0f || g_fCarShineBevel > 1.0f) g_fCarShineBevel = 0.25f;
     return 1;
   }
 
@@ -3428,13 +3428,13 @@ static int InputParseDebugSetting(const char *szName, const char *szValue)
 
   if (InputStringEqualsNoCase(szName, "CarShineDarkness")) {
     g_fCarShineDark = (float)atof(szValue);
-    if (g_fCarShineDark < 0.0f || g_fCarShineDark > 1.0f) g_fCarShineDark = 1.0f;
+    if (g_fCarShineDark < 0.0f || g_fCarShineDark > 1.0f) g_fCarShineDark = 0.85f;
     return 1;
   }
 
   if (InputStringEqualsNoCase(szName, "CarShine")) {
     g_fCarShine = (float)atof(szValue);
-    if (g_fCarShine < 0.0f || g_fCarShine > 2.0f) g_fCarShine = 0.0f;
+    if (g_fCarShine < 0.0f || g_fCarShine > 3.0f) g_fCarShine = 1.5f;
     return 1;
   }
 
