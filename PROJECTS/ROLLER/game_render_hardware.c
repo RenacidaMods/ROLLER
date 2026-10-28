@@ -839,8 +839,8 @@ static float section_cover(int chunk)
 
 /* How much a car is darkened in tunnels: the track's painted tunnel
  * shadows darken the road, but cars were drawn over them untouched. Eases
- * in and out over about a quarter of a second so there's no pop at the
- * section edge. */
+ * in over about a quarter of a second, and back out almost at once (out
+ * in the open, a lingering shade just looked wrong). */
 #define GRHW_TUNNEL_DARK 0.45f
 static float car_tunnel_dark(int carIdx, float cover)
 {
@@ -851,7 +851,7 @@ static float car_tunnel_dark(int carIdx, float cover)
     s_uiLastNs[carIdx] = now;
     if (dt > 1.0f) dt = 1.0f;
     float target = GRHW_TUNNEL_DARK * cover;
-    float k = 1.0f - expf(-dt / 0.12f);
+    float k = 1.0f - expf(-dt / (target > s_fDark[carIdx] ? 0.12f : 0.025f));
     s_fDark[carIdx] += (target - s_fDark[carIdx]) * k;
     return s_fDark[carIdx];
 }
