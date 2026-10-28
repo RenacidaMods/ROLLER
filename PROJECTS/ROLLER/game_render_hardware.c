@@ -799,16 +799,42 @@ static void car_model_matrix(float M[16], const GameRenderCarPose *pose)
 }
 
 /* Column-major chunk transform from localdata[chunk].pointAy. */
-/* Under a roofed section: the same rule drawtrk3.c uses to draw a section's
- * roof (a roof colour set, and walls on both sides). Checked against the
- * intro replays' tunnels and covered stretches. (The airborne shadow's
- * surface-type test marks banked shoulders, not roofs.) */
-static bool car_under_roof(int chunk)
+/* How covered a section is overhead, 0 (open sky) to 1 (fully covered).
+ * Tracks build their tunnels two ways, and both are checked:
+ *  - a roof: the rule drawtrk3.c uses to draw a section's roof (a roof
+ *    colour set, and walls on both sides);
+ *  - a tube: the left and right upper outer walls lean in until their tops
+ *    meet over the road (track 2's second corner, track 3's tube). The gap
+ *    between the two tops, across the section, is near zero there and
+ *    9000+ on open road; arches at the tube ends give a partial value.
+ * Checked against every intro replay's track and track 2: it fires in
+ * every tunnel and tube and on none of the open sections. */
+static float section_cover(int chunk)
 {
-    if (chunk < 0 || chunk >= MAX_TRACK_CHUNKS) return false;
-    return TrakColour[chunk][TRAK_COLOUR_ROOF] != -1
+    if (chunk < 0 || chunk >= MAX_TRACK_CHUNKS) return 0.0f;
+    if (TrakColour[chunk][TRAK_COLOUR_ROOF] != -1
         && TrakColour[chunk][TRAK_COLOUR_LEFT_WALL] != 0
-        && TrakColour[chunk][TRAK_COLOUR_RIGHT_WALL] != 0;
+        && TrakColour[chunk][TRAK_COLOUR_RIGHT_WALL] != 0)
+        return 1.0f;
+    if (GroundColour[chunk][GROUND_COLOUR_LUOWALL] == -1
+        || GroundColour[chunk][GROUND_COLOUR_RUOWALL] == -1)
+        return 0.0f;
+    /* Tops of the upper outer walls (ground points 0 and 5) in the
+     * section's own frame: y across (left positive), z up. */
+    const tData *d = &localdata[chunk];
+    const tVec3 *gp = GroundPt[chunk].pointAy;
+    float ly[2], lz[2];
+    for (int k = 0; k < 2; k++) {
+        const tVec3 *w = &gp[k ? 5 : 0];
+        float rx = w->fX + d->pointAy[3].fX, ry = w->fY + d->pointAy[3].fY, rz = w->fZ + d->pointAy[3].fZ;
+        ly[k] = d->pointAy[0].fY * rx + d->pointAy[1].fY * ry + d->pointAy[2].fY * rz;
+        lz[k] = d->pointAy[0].fZ * rx + d->pointAy[1].fZ * ry + d->pointAy[2].fZ * rz;
+    }
+    if (fminf(lz[0], lz[1]) < 1200.0f) return 0.0f;   /* low banks, not an overhead */
+    float gap = ly[0] - ly[1];
+    float t = (gap - 1500.0f) / 3500.0f;
+    t = t < 0.0f ? 0.0f : t > 1.0f ? 1.0f : t;
+    return 1.0f - t * t * (3.0f - 2.0f * t);
 }
 
 /* How much a car is darkened in tunnels: the track's painted tunnel
@@ -816,7 +842,7 @@ static bool car_under_roof(int chunk)
  * in and out over about a quarter of a second so there's no pop at the
  * section edge. */
 #define GRHW_TUNNEL_DARK 0.45f
-static float car_tunnel_dark(int carIdx, bool underRoof)
+static float car_tunnel_dark(int carIdx, float cover)
 {
     static float s_fDark[GAME_RENDER_HW_NUM_CARS];
     static Uint64 s_uiLastNs[GAME_RENDER_HW_NUM_CARS];
@@ -824,7 +850,7 @@ static float car_tunnel_dark(int carIdx, bool underRoof)
     float dt = s_uiLastNs[carIdx] ? (float)(now - s_uiLastNs[carIdx]) * 1e-9f : 1.0f;
     s_uiLastNs[carIdx] = now;
     if (dt > 1.0f) dt = 1.0f;
-    float target = underRoof ? GRHW_TUNNEL_DARK : 0.0f;
+    float target = GRHW_TUNNEL_DARK * cover;
     float k = 1.0f - expf(-dt / 0.12f);
     s_fDark[carIdx] += (target - s_fDark[carIdx]) * k;
     return s_fDark[carIdx];
@@ -948,7 +974,7 @@ void game_render_hw_draw_car(GameRendererHardware       *r,
             vertBuf, mesh->indexBuf, mesh->atlas,
             0, mesh->bodyIndexCount, mvp, shine, Mcar_chunk);
         scene_render_gpu_set_last_car_dark(scene,
-            car_tunnel_dark(carIdx, car_under_roof(chunk)));
+            car_tunnel_dark(carIdx, section_cover(chunk)));
 
         /* Shadow: use physical pose (no camera lean offsets) so shadow corners
          * stay exactly on the road surface.  adjPose tilts the quad slightly
@@ -1008,7 +1034,7 @@ void game_render_hw_draw_car(GameRendererHardware       *r,
         scene_render_gpu_queue_car_draw(scene,
             vertBuf, mesh->indexBuf, mesh->atlas,
             0, mesh->bodyIndexCount, mvp, shine, M);
-        scene_render_gpu_set_last_car_dark(scene, car_tunnel_dark(carIdx, false));   /* airborne: out of tunnels */
+        scene_render_gpu_set_last_car_dark(scene, car_tunnel_dark(carIdx, 0.0f));   /* airborne: out of tunnels */
 
         /* Shadow: replicate car.c:1339-1431's full branch choice for this
          * car's own airborne shadow (3 cases, matching SW exactly):
