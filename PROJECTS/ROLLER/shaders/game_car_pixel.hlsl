@@ -133,11 +133,22 @@ float4 main(PixelInput input) : SV_Target
         env = car_environment(el, az, elWidth, saturate(carDark));
         groundW = saturate(0.5 - el / elWidth);
         float fresnel = 0.25 + 0.75 * pow(1.0 - saturate(ndv), 4.0);
-        k = saturate(carShine * 0.6 * fresnel) * lowFade;
-
         float3 sunDir = carSunDir(input, up, ex, ey);
-        float  sd     = saturate(dot(R, sunDir));
-        glint = (pow(sd, 400.0) * 3.0 + pow(sd, 24.0) * 0.25) * saturate(carShine) * carGlint * lowFade;
+        float  ndl    = dot(N, sunDir);
+        /* Reflections are dimmer on the side turned away from the sun, so
+         * the shaded side doesn't glow. */
+        k = saturate(carShine * 0.6 * fresnel) * lowFade * lerp(0.45, 1.0, smoothstep(-0.25, 0.5, ndl));
+
+        /* Sun highlight on the panels facing the sun. A true mirror glint
+         * only shows when looking towards the sun, which put the shine on
+         * the shaded side and none on the sunlit side when the sun was
+         * behind the camera; it read as back to front. The half vector
+         * leans towards the sun, so the highlight sits on the sunlit
+         * panels and only slides a little with the view. */
+        float3 H  = normalize(sunDir + V * 0.35);
+        float  nh = saturate(dot(N, H));
+        glint = (pow(nh, 300.0) * 2.0 + pow(nh, 16.0) * 0.22)
+              * saturate(ndl * 3.0) * saturate(carShine) * carGlint * lowFade;
     }
 
     /* Sun shading: half-Lambert from the same sun as the world shading
