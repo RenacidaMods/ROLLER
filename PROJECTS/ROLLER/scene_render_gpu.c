@@ -3203,10 +3203,9 @@ SDL_GPUTexture *scene_render_gpu_flush_secondary_view(SceneRendererGPU *r, int s
         SDL_BindGPUGraphicsPipeline(rp, r->carPipeline);
         pfu.carShine = r->carShine;
         pfu.carSun   = r->sunShade;
-        SDL_PushGPUFragmentUniformData(r->cmdBuf, 0, &pfu, sizeof(pfu));
-        pfu.carShine = 0.0f;
-        pfu.carSun   = 0.0f;
         pfu.shadow[2] = 0.0f;
+        SDL_PushGPUFragmentUniformData(r->cmdBuf, 0, &pfu, sizeof(pfu));
+        /* Per-car pushes below carry the shine and sun too; reset after. */
         for (int i = 0; i < r->carDrawCount; i++) {
             SceneGPUCarDrawCmd *cmd = &r->carDraws[i];
             if (!cmd->texture) continue;
@@ -3226,6 +3225,9 @@ SDL_GPUTexture *scene_render_gpu_flush_secondary_view(SceneRendererGPU *r, int s
         }
     }
 
+    pfu.carShine  = 0.0f;   /* car shine, sun and darkening: car bodies only */
+    pfu.carSun    = 0.0f;
+    pfu.shadow[2] = 0.0f;
     if (r->carShadowDrawCount > 0 && r->carShadowPipeline) {
         SDL_BindGPUGraphicsPipeline(rp, r->carShadowPipeline);
         SDL_PushGPUFragmentUniformData(r->cmdBuf, 0, &pfu, sizeof(pfu));
@@ -4066,10 +4068,9 @@ static bool scene_render_gpu_end_frame_internal(SceneRendererGPU *r,
         SDL_BindGPUGraphicsPipeline(rp, r->carPipeline);
         pfu.carShine = r->carShine;
         pfu.carSun   = sunNow;
-        SDL_PushGPUFragmentUniformData(r->cmdBuf, 0, &pfu, sizeof(pfu));
-        pfu.carShine = 0.0f;
-        pfu.carSun   = 0.0f;
         pfu.shadow[2] = 0.0f;
+        SDL_PushGPUFragmentUniformData(r->cmdBuf, 0, &pfu, sizeof(pfu));
+        /* Per-car pushes below carry the shine and sun too; reset after. */
         for (int i = 0; i < r->carDrawCount; i++) {
             SceneGPUCarDrawCmd *cmd = &r->carDraws[i];
             if (!cmd->texture) continue;
@@ -4091,6 +4092,9 @@ static bool scene_render_gpu_end_frame_internal(SceneRendererGPU *r,
 
     /* Car shadow pass: drawn after car body so car-written depth blocks shadow
      * on the car surface (LESS_OR_EQUAL fails where car body wrote smaller depth). */
+    pfu.carShine  = 0.0f;   /* car shine, sun and darkening: car bodies only */
+    pfu.carSun    = 0.0f;
+    pfu.shadow[2] = 0.0f;
     if (r->carShadowDrawCount > 0 && r->carShadowPipeline) {
         SDL_BindGPUGraphicsPipeline(rp, r->carShadowPipeline);
         SDL_PushGPUFragmentUniformData(r->cmdBuf, 0, &pfu, sizeof(pfu));
