@@ -799,19 +799,16 @@ static void car_model_matrix(float M[16], const GameRenderCarPose *pose)
 }
 
 /* Column-major chunk transform from localdata[chunk].pointAy. */
-/* Under a roofed section (surface type 5/6/9 on the car's side of the
- * centre line, below the roof): the same test car.c uses for the airborne
- * shadow. ly/lz are the car's position across and above the section. */
-static bool car_under_roof(int chunk, float ly, float lz)
+/* Under a roofed section: the same rule drawtrk3.c uses to draw a section's
+ * roof (a roof colour set, and walls on both sides). Checked against the
+ * intro replays' tunnels and covered stretches. (The airborne shadow's
+ * surface-type test marks banked shoulders, not roofs.) */
+static bool car_under_roof(int chunk)
 {
-    const tData *sd = &localdata[chunk];
-    const tTrackInfo *ti = &TrackInfo[chunk];
-    if (ly <= 0.0f) {
-        int t = ti->iRightSurfaceType;
-        return -sd->fTrackHalfWidth < ly && (t == 5 || t == 6 || t == 9) && lz < ti->fRoofHeight;
-    }
-    int t = ti->iLeftSurfaceType;
-    return ly < sd->fTrackHalfWidth && (t == 5 || t == 6 || t == 9) && lz < ti->fRoofHeight;
+    if (chunk < 0 || chunk >= MAX_TRACK_CHUNKS) return false;
+    return TrakColour[chunk][TRAK_COLOUR_ROOF] != -1
+        && TrakColour[chunk][TRAK_COLOUR_LEFT_WALL] != 0
+        && TrakColour[chunk][TRAK_COLOUR_RIGHT_WALL] != 0;
 }
 
 /* How much a car is darkened in tunnels: the track's painted tunnel
@@ -951,7 +948,7 @@ void game_render_hw_draw_car(GameRendererHardware       *r,
             vertBuf, mesh->indexBuf, mesh->atlas,
             0, mesh->bodyIndexCount, mvp, shine, Mcar_chunk);
         scene_render_gpu_set_last_car_dark(scene,
-            car_tunnel_dark(carIdx, car_under_roof(chunk, pose->position.fY, pose->position.fZ)));
+            car_tunnel_dark(carIdx, car_under_roof(chunk)));
 
         /* Shadow: use physical pose (no camera lean offsets) so shadow corners
          * stay exactly on the road surface.  adjPose tilts the quad slightly
